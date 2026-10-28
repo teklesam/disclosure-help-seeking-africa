@@ -88,11 +88,11 @@ flowchart LR
 
 Survey-weighted proportion with a logit-scale 95% CI (Taylor linearisation, PSU clustering):
 
-$$\hat p=\frac{\sum_i w_i y_i}{\sum_i w_i},\qquad \operatorname{logit}(\hat p)\pm 1.96\,\frac{\widehat{\mathrm{SE}}(\hat p)}{\hat p(1-\hat p)}$$
+$$\hat p=\frac{\sum_i w_i y_i}{\sum_i w_i},\qquad \mathrm{logit}(\hat p)\pm 1.96\frac{\widehat{\mathrm{SE}}(\hat p)}{\hat p(1-\hat p)}$$
 
 Stage 1, country model for woman *i* in survey round *s(i)*, fitted by weighted pseudo-likelihood with cluster-robust standard errors:
 
-$$\operatorname{logit}\Pr(Y_i=1\mid\mathbf x_i)=\alpha_{s(i)}+\mathbf x_i^{\top}\boldsymbol\beta_c,\qquad
+$$\mathrm{logit}\Pr(Y_i=1\mid\mathbf x_i)=\alpha_{s(i)}+\mathbf x_i^{\top}\boldsymbol\beta_c,\qquad
 \widehat{\mathbf V}(\hat{\boldsymbol\beta}_c)=\tfrac{G}{G-1}\mathbf A^{-1}\Big(\sum_g\mathbf u_g\mathbf u_g^{\top}\Big)\mathbf A^{-1}$$
 
 Stage 2, countries within UN regions (non-centred):
