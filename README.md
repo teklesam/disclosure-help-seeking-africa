@@ -258,6 +258,9 @@ The documents will be released with the paper; the time stamps and hashes below 
 | 2026-10-28 12:55 | `83bd01d22f5cd3fc` | PREREGISTRATION 38 Correction 4 + review sensitivity analyses (before running) |
 | 2026-10-28 13:09 | `9ac28837ea371182` | PREREGISTRATION 38 addendum B12 Bayesian workflow (before running) |
 | 2026-10-28 13:17 | `52126dc581581da7` | PREREGISTRATION 38 results and deviations appended |
+| 2026-10-28 14:24 | `ffa566bc53be708b` | PREREGISTRATION 39 trend curves, regional and overall pooling (before models) |
+| 2026-10-28 14:26 | `9ce7a5b3c1370f85` | PREREGISTRATION 39 deviation 1 survey-level residual (before refit) |
+| 2026-10-28 14:27 | `64baf885a5f63a0d` | PREREGISTRATION 39 results appended |
 
 ## 8. Software
 

@@ -51,7 +51,7 @@ m2 = MC[MC.model == "M2"]; m0 = MC[MC.model == "M0"]
 n_m1 = int(((MC.model == "M1") & (MC.elpd_diff_vs_M2 > 2 * MC.se_diff_vs_M2)).sum())
 mx_m1 = MC[(MC.model == "M1") & (MC.elpd_diff_vs_M2 > 2 * MC.se_diff_vs_M2)].elpd_diff_vs_M2.max()
 pb = sorted(x for x in m2[["pB_chi2", "pB_sd", "pB_max", "pB_min"]].values.ravel() if x >= 0.05)
-hashes = [l.split("  ", 2) for l in (R / "docs/preregistration/PREREGISTRATION_hashes.log").read_text().splitlines() if re.search(r"PREREGISTRATION_3[378]", l) and not re.search(r"climate|A8\.1 ", l, re.I)]   # climate work is ongoing: not listed
+hashes = [l.split("  ", 2) for l in (R / "docs/preregistration/PREREGISTRATION_hashes.log").read_text().splitlines() if re.search(r"PREREGISTRATION_3[3789]", l) and not re.search(r"climate|A8\.1 ", l, re.I)]   # climate work is ongoing: not listed
 
 md = f"""# Help-seeking after violence among adolescents and young people in sub-Saharan Africa
 
