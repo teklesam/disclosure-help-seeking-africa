@@ -382,41 +382,13 @@ tex = r"""\documentclass[11pt,a4paper]{article}
 \noindent\textbf{Implications of all the available evidence} Services reach a small, severe and shrinking part of the violence that young people experience. Help-seeking should be monitored alongside violence prevalence for the Sustainable Development Goals, and programmes should create earlier, low-threshold routes to help, including for boys, rather than assume that help-seeking will rise with education or wealth.
 
 \section{Introduction}\label{sec:intro}
-\noindent\todo{Outline for drafting; literature led by DM. The previous prose is saved in the archive folder of this Overleaf project. Target about 450 words in four paragraphs.}
+\noindent\todo{Introduction to be written (literature led by DM); the outline with recommended references is in the archive folder of this Overleaf project.}
 
-\noindent\textbf{Paragraph 1. The burden, and why help after violence matters}
-\begin{itemize}\setlength{\itemsep}{1pt}
-\item Violence against children and young people is common: an estimated one billion children experience violence each year;\cite{hillis2016} intimate partner violence is most prevalent among young women in sub-Saharan Africa;\cite{sardinha2022} adolescents in poor urban settings report high levels of partner and non-partner violence.\cite{decker2014}
-\item Consequences for health: incident HIV infection,\cite{jewkes2010} depression and early pregnancy; violence prevention is framed by the INSPIRE strategies.\cite{who2016}
-\item Help is time-critical: post-exposure prophylaxis and emergency contraception after sexual violence,\cite{who2013} and protection and justice depend on disclosure. Links to Sustainable Development Goal targets 5.2 and 16.2.\cite{un2015}
-\end{itemize}
-
-\noindent\textbf{Paragraph 2. What is known about disclosure and help-seeking}
-\begin{itemize}\setlength{\itemsep}{1pt}
-\item Most survivors never reach formal services: across 24 countries, 40\% of women disclosed violence and 7\% reported to a formal source;\cite{palermo2014} in sub-Saharan Africa, 35--39\% of women with partner violence sought help, mostly from family, and about 3\% from formal institutions.\cite{aboagye2023,goodson2021,stiller2025}
-\item Among children and young people (VACS), formal help-seeking and service receipt are rare and lower among boys.\cite{sumner2015,pereira2020,velloza2022,denhard2024,okova2025}
-\item Help-seeking as a process (recognition, decision, choice of source), shaped by individual, relational and structural factors;\cite{liang2005} models specific to young people.\cite{rickwood2005}
-\end{itemize}
-
-\noindent\textbf{Paragraph 3. Gaps}
-\begin{itemize}\setlength{\itemsep}{1pt}
-\item Pooled analyses combine countries in one model, which assumes the same associations everywhere;\cite{aboagye2023,goodson2021,ayebeng2024} whether the factors associated with help-seeking are shared across African regions is unknown, and findings are rarely replicated.
-\item Young people (15--24 years) are rarely analysed separately, boys appear only in VACS, and trends across survey rounds have not been described.
-\item Reported levels depend on survey methods, so cross-survey comparisons need care.\cite{cullen2023,palermo2014}
-\end{itemize}
-
-\noindent\textbf{Paragraph 4. Aim} (keep as drafted)
-\begin{itemize}\setlength{\itemsep}{1pt}
-\item We asked: (1) how many young survivors tell someone, seek help and reach formal services, and how this differs by region; (2) which factors are associated with help-seeking, and whether they are the same across regions; and (3) whether help-seeking is changing over time.
-\end{itemize}
+Most young survivors of violence in sub-Saharan Africa never reach help,\cite{palermo2014,pereira2020} yet whether help-seeking is changing, and whether the factors associated with it are shared across regions, is unknown. We asked how many young survivors tell someone, seek help and reach formal services; whether this changed between 2004 and 2025; and which factors are associated with help-seeking across African regions.
 
 \section{Methods}\label{sec:methods}
 \subsection{Data}\label{sec:data}
-\textbf{DHS.} DHS are nationally representative household surveys. In the domestic violence module, one randomly selected woman per household is interviewed in private about physical violence since age 15 and sexual violence by partners and by anyone else.\cite{croft2018} We included all rounds from sub-Saharan African countries with the module and the help-seeking questions (""" + str(nS) + r""" surveys, """ + str(nC) + r""" countries, 2004--2025; """ + str(N['n_multiround_countries']) + r""" countries had two to five rounds) and analysed women aged 15--24 years who reported any physical or sexual violence (n=""" + fmt(nD) + r""").
-
-\textbf{VACS.} VACS are nationally representative household surveys of girls and boys aged 13--24 years, with separate questions for sexual and physical violence.\cite{nguyen2019} We used eight countries with comparable indicators (Kenya 2019, Lesotho 2018, Malawi 2013, Mozambique 2019, Namibia 2019, Eswatini 2022, Tanzania 2023, Zimbabwe 2017; n=""" + fmt(nV) + r""", of whom """ + fmt(nVany) + r""" reported violence: """ + fmt(nSV) + r""" sexual and """ + fmt(nPV) + r""" physical).
-
-\textbf{Role of each survey.} DHS is the primary source. It covers """ + str(nC) + r""" countries in all four regions over repeated rounds, and gives the cascade, the factors associated with help-seeking, the regional comparison, the replication and the trends. VACS adds what DHS cannot (boys, younger adolescents, and sexual and physical violence asked separately), in East and Southern Africa (appendix table~\ref{tab:sources}). We never pooled percentages across the two surveys, which sample different populations and word the questions differently; we pooled associations only in a pre-specified harmonised analysis (equation~\ref{eq:harm}). Seven of the eight VACS countries also have DHS surveys (all except """ + ", ".join(not_ov) + r""").
+\textbf{Data.} We used all DHS rounds from sub-Saharan Africa with the domestic violence module and help-seeking questions (""" + str(nS) + r""" surveys, """ + str(nC) + r""" countries, 2004--2025; """ + str(N['n_multiround_countries']) + r""" countries with repeated rounds), in which one randomly selected woman per household is interviewed in private,\cite{croft2018} and analysed women aged 15--24 years who reported physical or sexual violence (n=""" + fmt(nD) + r"""). VACS from eight countries (2013--2023; """ + fmt(nV) + r""" girls and boys aged 13--24 years, """ + fmt(nVany) + r""" of whom reported violence)\cite{nguyen2019} add boys, younger adolescents and separate questions on sexual and physical violence, in East and Southern Africa. Percentages were never pooled across the two surveys; associations were pooled only in a pre-specified harmonised analysis (appendix table~\ref{tab:sources}).
 
 \textbf{Outcomes.} DHS asked women who reported violence whether they had ever sought help, from whom, and whether they had told anyone. We defined three outcomes: \emph{told anyone} (sought help or told someone, where asked); \emph{sought any help}; and \emph{sought formal help} (police, health workers, lawyers or courts, social services, non-governmental and women's organisations, government offices for women or social affairs, safe spaces or shelters, and helplines). Religious and traditional leaders were informal; chiefs and local authorities were formal only in a sensitivity analysis. We read and audited the source labels of every survey (appendix table~\ref{tab:coding}). In VACS we used the derived indicators \emph{told anyone}, \emph{knew where to get help}, \emph{sought help} and \emph{received services}, separately for sexual and physical violence. All help-seeking items refer to the respondent's lifetime.
 
