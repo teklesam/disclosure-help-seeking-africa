@@ -178,6 +178,43 @@ def build(harm_rows, n37d, n37v, src_table="", forest_figs=""):
                      "Random-effects meta-regression: metafor, REML, random intercepts and slopes by country and a survey-level residual; Wald test of the slope. Southern Africa has no repeated surveys, so its slope is informed only by the other regions. "
                      "One survey with no formal-help events (Mozambique 2022) used a 0.5 continuity correction. Change from 2005 to 2025 (overall curve): " + "; ".join(f"{OLt[o].lower()} {f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_2005_2025.iloc[0])} percentage points ({f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_lo.iloc[0])} to {f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_hi.iloc[0])})" for o in OLt) + ".", size="\\scriptsize", sep="3pt"))
 
+    # ---------------- B3. Bayesian workflow for the trend model (Pre-registration 39, addendum B) ----------------
+    PPt = pd.read_csv(P38 / "P39B_prior_predictive.csv").set_index("outcome"); MCt = pd.read_csv(P38 / "P39B_model_checks.csv"); SNt = pd.read_csv(P38 / "P39B_prior_sensitivity.csv")
+    OLt2 = {"told": "Told anyone", "sought_any": "Sought any help", "formal": "Sought formal help"}
+    MN = {"T0": "T0 no trend", "T1": "T1 common trend", "T2": "T2 country trends", "T3": "T3 primary"}
+    out.append("\\subsection*{Bayesian workflow for the trend model}\n"
+               "The trend meta-regression was checked with the same workflow as the pooling model: prior predictive simulation with the actual survey design; "
+               "computational diagnostics; posterior predictive checks with Bayesian $p$-values, including a trend discrepancy (the least-squares slope of the survey logits on time); "
+               "comparison of four models by DIC, WAIC and leave-one-survey-out cross-validation; and prior sensitivity (Pre-registration 39, addendum B).\n")
+    body = "\n".join(f"{OLt2[o]} & {f1(r.prev_lo)}--{f1(r.prev_hi)} & {f2(r.OR_decade_lo)}--{f2(r.OR_decade_hi)} & {f2(r.sd_logit_lo)}--{f2(r.sd_logit_hi)} & {f2(r.sd_logit_obs)} & {f2(r.slope_lo)} to {f2(r.slope_hi)} & {f2(r.slope_obs)} \\\\" for o, r in PPt.iterrows())
+    out.append(table("tab:trendprior", "\\textbf{Prior predictive checks of the trend model}", ">{\\raggedright\\arraybackslash}p{2.6cm}cccccc",
+                     "& \\multicolumn{3}{c}{95\\% prior predictive range} & & & \\\\\n\\cmidrule(lr){2-4}\nOutcome & Prevalence, \\% & OR per decade & SD of logits & Observed SD & Slope per decade & Observed slope",
+                     body, "Simulated from the priors only, using each outcome's survey times, standard errors, countries and regions (8000 draws). The priors admit every plausible prevalence and trend. "
+                     "For telling and seeking help the observed between-survey spread is smaller than the priors anticipate, so the priors are conservative rather than in conflict with the data; estimates were unchanged under narrower slope priors (table~\\ref{tab:trendsens}).", sep="3pt"))
+    rows = []
+    for o in OLt2:
+        for m in ["T0", "T1", "T2", "T3"]:
+            r = MCt[(MCt.outcome == o) & (MCt.model == m)].iloc[0]
+            orr = ci(r.OR_decade, r.OR_lo, r.OR_hi) if pd.notna(r.get("OR_decade", np.nan)) else "--"
+            dl = "ref." if m == "T3" else f"{f1(r.delta_elpd_vs_T3)} ({f1(r.se_delta)})"
+            rows.append(f"{OLt2[o] if m == 'T0' else ''} & {MN[m]} & {orr} & {f1(r.DIC)} & {f1(r.WAIC)} & {dl} & {f2(r.pB_chi2)} & {f2(r.pB_sd)} & {f2(r.pB_max)} & {f2(r.pB_min)} & {f2(r.pB_slope)} & {r.rhat_max:.3f} & {int(r.ess_bulk_min)}/{int(r.ess_tail_min)} & {int(r.divergences)} \\\\")
+        rows.append("\\addlinespace")
+    out.append(table("tab:trendchecks", "\\textbf{Trend model: comparison, posterior predictive checks and diagnostics}", ">{\\raggedright\\arraybackslash}p{1.5cm}lcccccccccccc",
+                     "& & & & & & \\multicolumn{5}{c}{Bayesian $p$-value} & & & \\\\\n\\cmidrule(lr){7-11}\nOutcome & Model & OR per decade & DIC & WAIC & $\\Delta$elpd (SE) & $\\chi^2$ & SD & Max & Min & Slope & $\\hat R$ & ESS bulk/tail & Div.", "\n".join(rows[:-1]),
+                     "T0: no trend; T1: one trend for all countries; T2: country trends without regions; T3: country trends within regions (primary, figure~\\ref{fig:trends}). "
+                     "$\\Delta$elpd: difference in expected log predictive density from leave-one-survey-out cross-validation (PSIS-LOO) relative to T3; positive values favour the alternative. "
+                     "The pre-specified rule retains T3 unless an alternative is better by more than two standard errors and by more than 4; no alternative met it. "
+                     "For seeking any help the no-trend model predicted worse and could not reproduce the observed decline (Bayesian $p$ for the slope 1.00), supporting the trend; "
+                     "the common-trend model was marginally better with a narrower interval, so T3 is conservative. Tail ESS: minimum effective sample size of the 5\\% and 95\\% quantile indicators.", size="\\scriptsize", sep="2pt"))
+    body = "\n".join(f"{OLt2[r.outcome]} & $\\mathcal N(0,{r.b_sd:g})$ & Half-Normal({r.slope_sd:g}) & {ci(r.OR_decade, r.OR_lo, r.OR_hi)} & {f2(r.P_decline)} \\\\" for r in SNt.itertuples())
+    out.append(table("tab:trendsens", "\\textbf{Trend model: sensitivity to the priors}", ">{\\raggedright\\arraybackslash}p{3cm}cccc",
+                     "Outcome & Prior on $B$ & Prior on $\\sigma_b,\\omega_b$ & OR per decade (95\\% CrI) & Pr(decline)", body,
+                     "Primary priors: $B\\sim\\mathcal N(0,1)$ and $\\sigma_b,\\omega_b\\sim$ Half-Normal(0.5) (appendix table~\\ref{tab:trendmodel})."))
+    out.append("\\begin{figure}[!htbp]\n\\centering\n\\includegraphics[width=0.92\\textwidth]{figures/figS_trend_checks.png}\n"
+               "\\caption{\\textbf{Prior and posterior predictive checks of the trend model}\\\\ Top row: prior predictive distribution of the standard deviation of the survey logits; "
+               "middle row: prior predictive distribution of the slope of the survey logits per decade; bottom row: posterior predictive distribution of the slope under the primary model, with the Bayesian $p$-value. "
+               "Dashed lines mark the observed values.}\n\\label{fig:trendchecks}\n\\end{figure}\n")
+
     # ---------------- C. Sensitivity analyses ----------------
     out.append("\\subsection*{C. Sensitivity analyses}\n")
     rows = []
