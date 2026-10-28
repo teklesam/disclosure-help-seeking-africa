@@ -197,6 +197,89 @@ def lancet(tex):
 # author line kept in a local, untracked file (authors_local.tex); placeholder otherwise
 AUTHORS = (Path(__file__).with_name("authors_local.tex").read_text().strip() if Path(__file__).with_name("authors_local.tex").exists() else r"\todo{Authors to confirm}")
 
+METHODS_DETAIL = r"""\subsection*{Supplementary methods: statistical models in detail}\label{sec:methods_detail}
+This section gives the equations, priors and estimation details summarised in the Methods. The symbols are defined in table~\ref{tab:symbols}.
+
+\textbf{Prevalence.} For each outcome $y$ and group we estimated the survey-weighted proportion $\hat p=\sum_i w_i y_i/\sum_i w_i$, where $w_i$ is the domestic violence weight. Proportions near zero (formal help) have skewed sampling distributions, so 95\% CIs were computed on the logit scale,
+\begin{equation}\label{eq:ci}
+\operatorname{logit}(\hat p)\pm 1.96\,\frac{\widehat{\mathrm{SE}}(\hat p)}{\hat p(1-\hat p)},
+\end{equation}
+and back-transformed, with $\widehat{\mathrm{SE}}(\hat p)$ from Taylor linearisation allowing for clustering within primary sampling units (PSUs).\cite{lumley2004} Strata were not declared, which makes intervals slightly conservative. DHS weights sum to each survey's sample size, so pooled proportions weight surveys by sample size; we also report proportions weighted by each country's female population aged 15--24 years.\cite{worldpop2025} VACS weights were normalised within country.
+
+\textbf{Country models.} Sampling, questionnaires and services differ between countries, so we used a two-stage individual participant data approach:\cite{riley2010,burke2017} we first fitted a separate model in each country $c$, which respects each survey's design.\cite{campos2023} For respondent $i$ in survey round $s(i)$,
+\begin{equation}\label{eq:logit}
+\operatorname{logit}\Pr(Y_{i}=1\mid \mathbf{x}_{i}) = \alpha_{s(i)} + \mathbf{x}_{i}^{\top}\boldsymbol\beta_{c},
+\end{equation}
+where $\alpha_{s(i)}$ are survey-round fixed effects, so that $\boldsymbol\beta_c$ compares women interviewed in the same round. Parameters maximised the weighted pseudo-log-likelihood
+\begin{equation}\label{eq:pll}
+\ell(\boldsymbol\beta_c)=\sum_i w_i\left[y_i\log\pi_i+(1-y_i)\log(1-\pi_i)\right],
+\end{equation}
+which yields estimates representative of the surveyed population.\cite{lumley2004} Standard errors used the cluster-robust sandwich estimator
+\begin{equation}\label{eq:sandwich}
+\widehat{\mathbf V}(\hat{\boldsymbol\beta}_c)=\frac{G}{G-1}\,\mathbf A^{-1}\Big(\sum_{g=1}^{G}\mathbf u_g\mathbf u_g^{\top}\Big)\mathbf A^{-1},\qquad \mathbf u_g=\sum_{i\in g}w_i(y_i-\pi_i)\mathbf x_i,
+\end{equation}
+where $g$ indexes the $G$ PSUs and $\mathbf A$ is the weighted information matrix, so that inference allows for correlation within communities. We fitted models with fixest.\cite{berge2018} Pre-specified rules required at least 300 respondents and 30 events per country and discarded estimates with standard errors above 5 (separation). Injury was missing for """ + f"{inj_miss}" + r"""\% of women with partner violence, who were kept with a missing-indicator term. All predictors entered together, so each odds ratio is mutually adjusted; because education, wealth, urban residence and age precede the other predictors, we also fitted a reduced model with these four only.\cite{westreich2013} VACS models were fitted separately for sexual and physical violence among those reporting each type, with one intercept per country (one round), the VACS predictors and an inclusion rule of 150 respondents and 15 events; rural residence, not recorded in Kenya, was omitted there.
+
+\textbf{Combining countries.} We combined the country estimates $\hat\beta_{ck}$ for predictor $k$, with standard errors $s_{ck}$, in a Bayesian hierarchical model of countries within regions:
+\begin{equation}\label{eq:hier}
+\hat\beta_{ck}\sim\mathcal N(\theta_{ck},s_{ck}^2),\qquad \theta_{ck}=\mu_{r(c)k}+\tau_k z_{c},\qquad \mu_{rk}=\mu_k+\omega_k u_{r},\qquad z_c,u_r\sim\mathcal N(0,1),
+\end{equation}
+with priors $\mu_k\sim\mathcal N(0,1)$ and $\tau_k,\omega_k\sim\text{Half-Normal}(0,0.5)$ on the log-odds scale. $\mu_k$ is the pooled log odds ratio, $\mu_{rk}$ the regional means, and $\tau_k$ and $\omega_k$ the between-country and between-region standard deviations. The model shrinks each country towards its regional mean, and each regional mean towards the pooled mean, in proportion to their precision. We used a Bayesian estimator because between-region variance cannot be estimated reliably from three or four regions by moment-based methods; weakly informative priors stabilise it.\cite{gelman2006} The non-centred parametrisation avoids the funnel geometry that arises when $\omega_k$ is near zero. We sampled the posterior with the No-U-Turn sampler\cite{hoffman2014} in NumPyro\cite{phan2019} (four chains of 2000 warm-up and 2000 draws; target acceptance 0.995) and report posterior medians with 95\% credible intervals (CrIs) of $\exp(\mu_k)$ and $\exp(\mu_{rk})$. We fitted the model separately to DHS (regions: West, Central and East Africa) and VACS (East Africa: Kenya, Malawi, Mozambique, Tanzania, Zimbabwe; Southern Africa: Eswatini, Lesotho, Namibia).
+
+Country $c$ in region $r$ carries approximately the weight
+\begin{equation}\label{eq:weights}
+\lambda_c=\frac{W_r}{\sum_{r'}W_{r'}}\cdot\frac{w_c}{\sum_{c'\in r}w_{c'}},\qquad w_c=\frac{1}{s_c^2+\tau^2},\qquad W_r=\Big(\frac{1}{\sum_{c\in r}w_c}+\omega^2\Big)^{-1},
+\end{equation}
+so large, precise countries count more, but the variance components stop any one country dominating.
+
+\textbf{Bayesian inference.} We followed a Bayesian workflow.\cite{gelman2020,gabry2019} The priors are weakly informative: $\mu_k\sim\mathcal N(0,1)$ allows pooled odds ratios between 0.14 and 7.1, and the half-normal(0.5) priors allow regional or country odds ratios to differ up to about 2.7-fold. Prior predictive simulation confirmed that they admit all plausible values (appendix figure~\ref{fig:priorpred}). Convergence required $\hat R<1.01$,\cite{vehtari2021} bulk effective sample size above 400 and E-BFMI above 0.3. Posterior predictive checks compared observed and replicated discrepancies $T$ (a $\chi^2$ statistic and the standard deviation, maximum and minimum of the country estimates) through Bayesian $p$-values, $p_B=\Pr\{T(y^{\text{rep}},\theta)\ge T(y,\theta)\mid y\}$; values below 0.05 or above 0.95 indicate misfit.\cite{gelman1996} We compared the primary model (M2, countries within regions) with a common-effect model (M0) and a model without regions (M1) by the deviance information criterion (DIC),\cite{spiegelhalter2002} the widely applicable information criterion (WAIC)\cite{watanabe2010} and leave-one-country-out cross-validation (PSIS-LOO),\cite{vehtari2017} each computed from the likelihood marginal over the country effect. We also report 95\% prediction intervals for a new country\cite{riley2011} and sensitivity to the prior on $\omega_k$.
+
+\textbf{Agreement across regions.} For each predictor we computed (i) the posterior probability that all regional means share the sign of the pooled mean, $\Pr\{\operatorname{sign}(\mu_{rk})=\operatorname{sign}(\tilde\mu_k)\ \forall r\}$, and (ii) a test of between-region heterogeneity, $Q_k=\sum_r \hat W_r(\hat\mu_{rk}-\bar\mu_k)^2\sim\chi^2_{R-1}$, from DerSimonian--Laird regional estimates\cite{dersimonian1986} with Holm correction.\cite{holm1979} A predictor was consistent across regions if (i) exceeded 0.9 and (ii) was not significant, region-specific if (ii) was significant, and uncertain otherwise.
+
+\textbf{Replication.} Before any outcome analysis, DHS countries were randomly split (seed 20261015) into a discovery and a held-out set. A finding replicated if its credible interval excluded one, with the same sign, in both sets.
+
+\textbf{Trends.} In DHS countries with at least two rounds, we added survey year to equation~\eqref{eq:logit} as $\gamma_c t_i$, with $t_i=(\text{year}_i-2015)/10$, so that $\exp(\gamma_c)$ is the odds ratio per decade, and pooled $\gamma_c$ with equation~\eqref{eq:hier}. To test whether trends reflected changes in who reports violence, we estimated the trend in past-year victimisation and the help-seeking trend among women with partner violence with further adjustment for severity and injury. A linear probability model gave the change in percentage points. To show how the levels of the cascade changed, we also fitted a Bayesian hierarchical meta-regression to the survey-level estimates (logit scale, with design-based standard errors): $y_{cs}\sim\mathcal N(a_c+b_c t_{cs},\,se_{cs}^2+\sigma_e^2)$, with country intercepts and slopes nested in regional and overall means, $b_c=B_{r(c)}+\sigma_b z_c$ and $B_r=B+\omega_b u_r$ (appendix). This model gives the overall and regional curves with 95\% CrIs and the posterior probability of a decline, $\Pr(B<0)$. As a frequentist test we fitted a random-effects meta-regression with random intercepts and slopes by country and a survey-level residual (metafor, REML), with Wald tests of the slope and of a region-by-time interaction. The trend model went through the same Bayesian workflow (prior and posterior predictive checks, including a trend discrepancy; comparison with no-trend, common-trend and country-trend models by DIC, WAIC and cross-validation; and prior sensitivity; appendix).
+
+\textbf{Harmonised pooled analysis of DHS and VACS.} To test whether the surveys agree, and to pool them where they do, we restricted a pre-registered secondary analysis to what both measure: young women aged 15--24 years with violence (DHS) and girls of the same age (VACS); told anyone and sought any help (in VACS, about any type of violence); and age, rural residence, female household head and both types of violence. Equation~\ref{eq:logit} was fitted for each country and survey programme, and the estimates $\hat\beta_{jk}$ for country--programme $j$ were combined as
+\begin{equation}\label{eq:harm}
+\hat\beta_{jk}\sim\mathcal N(\theta_{jk},s_{jk}^2),\qquad \theta_{jk}=\mu_k+\delta_k x_j+\omega_k u_{r(j)}+\tau_k z_j,\qquad x_j=\begin{cases}-\tfrac12 & \text{DHS}\\ \phantom{-}\tfrac12 & \text{VACS},\end{cases}
+\end{equation}
+with $\delta_k\sim\mathcal N(0,1)$ and the other terms as in equation~\ref{eq:hier}, over all four regions. Because $x_j$ is centred, $\exp(\mu_k)$ is the pooled odds ratio with the two programmes weighted equally, $\exp(\mu_k\mp\delta_k/2)$ are the DHS and VACS odds ratios, and $\exp(\delta_k)$ is their ratio. The surveys agreed if the 95\% CrI of $\exp(\delta_k)$ included one and both programme-specific estimates had the same sign with posterior probability above 0\md{}9, differed if the CrI excluded one, and were otherwise uncertain. We interpreted the pooled odds ratio only where they agreed, and repeated the analysis with $\delta_k=0$ and in countries with both surveys.
+
+\textbf{Southern Africa (exploratory).} No Southern African country met the inclusion rule, so we fitted one exploratory model pooling Lesotho, Namibia and South Africa with survey fixed effects (table~\ref{tab:predictors}).
+
+\textbf{Sensitivity analyses.} Added after an internal methodological review and pre-registered: crude odds ratios; the reduced socio-demographic model; women whose violence all occurred in the 12 months before the interview, so that lifetime help-seeking refers to recent violence; adjusted prevalence ratios (Poisson regression with robust standard errors)\cite{zou2004} and adjusted risk differences (linear probability models), pooled in the same way; one-stage models fitting all countries together, survey-weighted with fixed effects and as a mixed model with random slopes by country;\cite{bates2015} generalised variance inflation factors;\cite{fox1992} population-weighted proportions; and a wider definition of formal help (appendix).
+
+
+\begin{table}[!htbp]
+\centering
+\begin{threeparttable}
+\caption{\textbf{Symbols used in the model equations}}
+\label{tab:symbols}
+\footnotesize
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{11.8cm}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$i$, $c$, $r$, $s$ & Respondent, country, UN region, survey round \\
+$y_i$, $w_i$ & Outcome (1 = told, sought help or sought formal help) and survey weight (domestic violence module weight) \\
+$\hat p$ & Survey-weighted proportion \\
+$\alpha_{s}$ & Survey-round fixed effect in a country model \\
+$\boldsymbol\beta_c$, $\hat\beta_{ck}$, $s_{ck}$ & Country log odds ratios; estimate and standard error for predictor $k$ in country $c$ \\
+$\mu_k$, $\mu_{rk}$, $\theta_{ck}$ & Pooled (all-region) log odds ratio, regional mean, true country effect \\
+$\tau_k$, $\omega_k$ & Between-country and between-region standard deviations \\
+$z_c$, $u_r$ & Standard normal country and region effects (non-centred parametrisation) \\
+$\lambda_c$ & Approximate weight of country $c$ in the pooled estimate \\
+$\delta_k$, $x_j$ & DHS--VACS difference in log odds ratio; programme indicator ($-\tfrac12$ DHS, $+\tfrac12$ VACS) \\
+$y_{cs}$, $se_{cs}$, $t_{cs}$ & Survey-level logit proportion, its design-based standard error, and time in decades from 2015 \\
+$a_c$, $b_c$, $A_r$, $B_r$, $A$, $B$ & Country, regional and overall intercepts and slopes of the trend model \\
+$\sigma_a$, $\sigma_b$, $\omega_a$, $\omega_b$, $\sigma_e$ & Between-country and between-region standard deviations of intercepts and slopes; survey-level residual standard deviation \\
+\bottomrule
+\end{tabular}
+\end{threeparttable}
+\end{table}
+"""
+
 FOREST_FIGS = r"""\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\textwidth,height=0.80\textheight,keepaspectratio]{figures/fig2_forest_injury_severe_lancet.png}
@@ -339,56 +422,16 @@ tex = r"""\documentclass[11pt,a4paper]{article}
 
 \textbf{Predictors.} We pre-specified predictors from the help-seeking framework\cite{liang2005} and earlier survey studies:\cite{palermo2014,pereira2020} injury from partner violence (bruises; eye injuries, sprains, dislocations or burns; or wounds, broken bones, broken teeth or other serious injury), severe physical violence (DHS summary of being kicked or dragged, strangled or burnt, or threatened with a weapon), partner alcohol use and three or more controlling behaviours (asked about partners only, so modelled among women with partner violence); type of violence (physical, sexual, both); perpetrator (partner, non-partner, both; forced sex was attributed using the person who forced the first sexual act, where this was asked); violence in the past 12 months; age in years; education; household wealth quintile; urban residence; marital status; employment; three or more children; weekly media exposure; participation in household decisions; agreement that wife-beating is justified; and privacy of the interview (not interrupted by the husband or another adult). VACS models included sex, age in years, rural residence, a female household head and experiencing both sexual and physical violence.
 
-\subsection{Statistical model}\label{sec:model}
-\textbf{Prevalence.} For each outcome $y$ and group we estimated the survey-weighted proportion $\hat p=\sum_i w_i y_i/\sum_i w_i$, where $w_i$ is the domestic violence weight. Proportions near zero (formal help) have skewed sampling distributions, so 95\% CIs were computed on the logit scale,
-\begin{equation}\label{eq:ci}
-\operatorname{logit}(\hat p)\pm 1.96\,\frac{\widehat{\mathrm{SE}}(\hat p)}{\hat p(1-\hat p)},
-\end{equation}
-and back-transformed, with $\widehat{\mathrm{SE}}(\hat p)$ from Taylor linearisation allowing for clustering within primary sampling units (PSUs).\cite{lumley2004} Strata were not declared, which makes intervals slightly conservative. DHS weights sum to each survey's sample size, so pooled proportions weight surveys by sample size; we also report proportions weighted by each country's female population aged 15--24 years.\cite{worldpop2025} VACS weights were normalised within country.
+\subsection{Statistical analysis}\label{sec:model}
+\textbf{Cascade.} We estimated survey-weighted percentages with 95\% CIs that account for clustering within primary sampling units, computed on the logit scale because formal help is rare.\cite{lumley2004} Pooled percentages weight surveys by their sample size; percentages weighted by each country's population of young women are in the appendix.
 
-\textbf{Country models.} Sampling, questionnaires and services differ between countries, so we used a two-stage individual participant data approach:\cite{riley2010,burke2017} we first fitted a separate model in each country $c$, which respects each survey's design.\cite{campos2023} For respondent $i$ in survey round $s(i)$,
-\begin{equation}\label{eq:logit}
-\operatorname{logit}\Pr(Y_{i}=1\mid \mathbf{x}_{i}) = \alpha_{s(i)} + \mathbf{x}_{i}^{\top}\boldsymbol\beta_{c},
-\end{equation}
-where $\alpha_{s(i)}$ are survey-round fixed effects, so that $\boldsymbol\beta_c$ compares women interviewed in the same round. Parameters maximised the weighted pseudo-log-likelihood
-\begin{equation}\label{eq:pll}
-\ell(\boldsymbol\beta_c)=\sum_i w_i\left[y_i\log\pi_i+(1-y_i)\log(1-\pi_i)\right],
-\end{equation}
-which yields estimates representative of the surveyed population.\cite{lumley2004} Standard errors used the cluster-robust sandwich estimator
-\begin{equation}\label{eq:sandwich}
-\widehat{\mathbf V}(\hat{\boldsymbol\beta}_c)=\frac{G}{G-1}\,\mathbf A^{-1}\Big(\sum_{g=1}^{G}\mathbf u_g\mathbf u_g^{\top}\Big)\mathbf A^{-1},\qquad \mathbf u_g=\sum_{i\in g}w_i(y_i-\pi_i)\mathbf x_i,
-\end{equation}
-where $g$ indexes the $G$ PSUs and $\mathbf A$ is the weighted information matrix, so that inference allows for correlation within communities. We fitted models with fixest.\cite{berge2018} Pre-specified rules required at least 300 respondents and 30 events per country and discarded estimates with standard errors above 5 (separation). Injury was missing for """ + f"{inj_miss}" + r"""\% of women with partner violence, who were kept with a missing-indicator term. All predictors entered together, so each odds ratio is mutually adjusted; because education, wealth, urban residence and age precede the other predictors, we also fitted a reduced model with these four only.\cite{westreich2013} VACS models were fitted separately for sexual and physical violence among those reporting each type, with one intercept per country (one round), the VACS predictors and an inclusion rule of 150 respondents and 15 events; rural residence, not recorded in Kenya, was omitted there.
+\textbf{Factors associated with help-seeking.} Sampling, questionnaires and services differ between countries, so we used a two-stage approach.\cite{riley2010,burke2017,campos2023} First, in each country, we fitted a survey-weighted logistic regression with all pre-specified predictors, survey-round fixed effects and standard errors clustered by primary sampling unit; a country entered if it had at least 300 respondents and 30 events. Second, we combined the country odds ratios in a Bayesian hierarchical model of countries within UN regions, in which each regional and all-region estimate borrows strength from the others while countries and regions are allowed to differ.\cite{gelman2006} We report posterior medians with 95\% credible intervals (CrIs) and 95\% prediction intervals for a new country,\cite{riley2011} classify each factor as consistent across regions, region-specific or uncertain, and test replication in two random halves of countries. Southern Africa, where no country met the inclusion rule, was analysed in one exploratory pooled model.
 
-\textbf{Combining countries.} We combined the country estimates $\hat\beta_{ck}$ for predictor $k$, with standard errors $s_{ck}$, in a Bayesian hierarchical model of countries within regions:
-\begin{equation}\label{eq:hier}
-\hat\beta_{ck}\sim\mathcal N(\theta_{ck},s_{ck}^2),\qquad \theta_{ck}=\mu_{r(c)k}+\tau_k z_{c},\qquad \mu_{rk}=\mu_k+\omega_k u_{r},\qquad z_c,u_r\sim\mathcal N(0,1),
-\end{equation}
-with priors $\mu_k\sim\mathcal N(0,1)$ and $\tau_k,\omega_k\sim\text{Half-Normal}(0,0.5)$ on the log-odds scale. $\mu_k$ is the pooled log odds ratio, $\mu_{rk}$ the regional means, and $\tau_k$ and $\omega_k$ the between-country and between-region standard deviations. The model shrinks each country towards its regional mean, and each regional mean towards the pooled mean, in proportion to their precision. We used a Bayesian estimator because between-region variance cannot be estimated reliably from three or four regions by moment-based methods; weakly informative priors stabilise it.\cite{gelman2006} The non-centred parametrisation avoids the funnel geometry that arises when $\omega_k$ is near zero. We sampled the posterior with the No-U-Turn sampler\cite{hoffman2014} in NumPyro\cite{phan2019} (four chains of 2000 warm-up and 2000 draws; target acceptance 0.995) and report posterior medians with 95\% credible intervals (CrIs) of $\exp(\mu_k)$ and $\exp(\mu_{rk})$. We fitted the model separately to DHS (regions: West, Central and East Africa) and VACS (East Africa: Kenya, Malawi, Mozambique, Tanzania, Zimbabwe; Southern Africa: Eswatini, Lesotho, Namibia).
+\textbf{Trends.} We estimated change over two decades in two complementary ways. Within the """ + str(N['n_multiround_countries']) + r""" countries with repeated rounds, we added survey year to the country models, giving an odds ratio per decade adjusted for all predictors. Across all """ + str(nS) + r""" surveys, a Bayesian hierarchical meta-regression of the survey-level percentages gave the overall and regional curves in figure~\ref{fig:trends} and the posterior probability of a decline; a frequentist random-effects meta-regression tested the slope and differences between regions.
 
-Country $c$ in region $r$ carries approximately the weight
-\begin{equation}\label{eq:weights}
-\lambda_c=\frac{W_r}{\sum_{r'}W_{r'}}\cdot\frac{w_c}{\sum_{c'\in r}w_{c'}},\qquad w_c=\frac{1}{s_c^2+\tau^2},\qquad W_r=\Big(\frac{1}{\sum_{c\in r}w_c}+\omega^2\Big)^{-1},
-\end{equation}
-so large, precise countries count more, but the variance components stop any one country dominating.
+\textbf{DHS and VACS.} VACS models were fitted separately for sexual and physical violence and combined in the same way across East and Southern Africa. A pre-registered harmonised analysis pooled the associations of four factors measured in both surveys and estimated the difference between the surveys directly; percentages were never pooled across surveys.
 
-\textbf{Bayesian inference.} We followed a Bayesian workflow.\cite{gelman2020,gabry2019} The priors are weakly informative: $\mu_k\sim\mathcal N(0,1)$ allows pooled odds ratios between 0.14 and 7.1, and the half-normal(0.5) priors allow regional or country odds ratios to differ up to about 2.7-fold. Prior predictive simulation confirmed that they admit all plausible values (appendix figure~\ref{fig:priorpred}). Convergence required $\hat R<1.01$,\cite{vehtari2021} bulk effective sample size above 400 and E-BFMI above 0.3. Posterior predictive checks compared observed and replicated discrepancies $T$ (a $\chi^2$ statistic and the standard deviation, maximum and minimum of the country estimates) through Bayesian $p$-values, $p_B=\Pr\{T(y^{\text{rep}},\theta)\ge T(y,\theta)\mid y\}$; values below 0.05 or above 0.95 indicate misfit.\cite{gelman1996} We compared the primary model (M2, countries within regions) with a common-effect model (M0) and a model without regions (M1) by the deviance information criterion (DIC),\cite{spiegelhalter2002} the widely applicable information criterion (WAIC)\cite{watanabe2010} and leave-one-country-out cross-validation (PSIS-LOO),\cite{vehtari2017} each computed from the likelihood marginal over the country effect. We also report 95\% prediction intervals for a new country\cite{riley2011} and sensitivity to the prior on $\omega_k$.
-
-\textbf{Agreement across regions.} For each predictor we computed (i) the posterior probability that all regional means share the sign of the pooled mean, $\Pr\{\operatorname{sign}(\mu_{rk})=\operatorname{sign}(\tilde\mu_k)\ \forall r\}$, and (ii) a test of between-region heterogeneity, $Q_k=\sum_r \hat W_r(\hat\mu_{rk}-\bar\mu_k)^2\sim\chi^2_{R-1}$, from DerSimonian--Laird regional estimates\cite{dersimonian1986} with Holm correction.\cite{holm1979} A predictor was consistent across regions if (i) exceeded 0.9 and (ii) was not significant, region-specific if (ii) was significant, and uncertain otherwise.
-
-\textbf{Replication.} Before any outcome analysis, DHS countries were randomly split (seed 20261015) into a discovery and a held-out set. A finding replicated if its credible interval excluded one, with the same sign, in both sets.
-
-\textbf{Trends.} In DHS countries with at least two rounds, we added survey year to equation~\eqref{eq:logit} as $\gamma_c t_i$, with $t_i=(\text{year}_i-2015)/10$, so that $\exp(\gamma_c)$ is the odds ratio per decade, and pooled $\gamma_c$ with equation~\eqref{eq:hier}. To test whether trends reflected changes in who reports violence, we estimated the trend in past-year victimisation and the help-seeking trend among women with partner violence with further adjustment for severity and injury. A linear probability model gave the change in percentage points. To show how the levels of the cascade changed, we also fitted a Bayesian hierarchical meta-regression to the survey-level estimates (logit scale, with design-based standard errors): $y_{cs}\sim\mathcal N(a_c+b_c t_{cs},\,se_{cs}^2+\sigma_e^2)$, with country intercepts and slopes nested in regional and overall means, $b_c=B_{r(c)}+\sigma_b z_c$ and $B_r=B+\omega_b u_r$ (appendix). This model gives the overall and regional curves with 95\% CrIs and the posterior probability of a decline, $\Pr(B<0)$. As a frequentist test we fitted a random-effects meta-regression with random intercepts and slopes by country and a survey-level residual (metafor, REML), with Wald tests of the slope and of a region-by-time interaction. The trend model went through the same Bayesian workflow (prior and posterior predictive checks, including a trend discrepancy; comparison with no-trend, common-trend and country-trend models by DIC, WAIC and cross-validation; and prior sensitivity; appendix).
-
-\textbf{Harmonised pooled analysis of DHS and VACS.} To test whether the surveys agree, and to pool them where they do, we restricted a pre-registered secondary analysis to what both measure: young women aged 15--24 years with violence (DHS) and girls of the same age (VACS); told anyone and sought any help (in VACS, about any type of violence); and age, rural residence, female household head and both types of violence. Equation~\ref{eq:logit} was fitted for each country and survey programme, and the estimates $\hat\beta_{jk}$ for country--programme $j$ were combined as
-\begin{equation}\label{eq:harm}
-\hat\beta_{jk}\sim\mathcal N(\theta_{jk},s_{jk}^2),\qquad \theta_{jk}=\mu_k+\delta_k x_j+\omega_k u_{r(j)}+\tau_k z_j,\qquad x_j=\begin{cases}-\tfrac12 & \text{DHS}\\ \phantom{-}\tfrac12 & \text{VACS},\end{cases}
-\end{equation}
-with $\delta_k\sim\mathcal N(0,1)$ and the other terms as in equation~\ref{eq:hier}, over all four regions. Because $x_j$ is centred, $\exp(\mu_k)$ is the pooled odds ratio with the two programmes weighted equally, $\exp(\mu_k\mp\delta_k/2)$ are the DHS and VACS odds ratios, and $\exp(\delta_k)$ is their ratio. The surveys agreed if the 95\% CrI of $\exp(\delta_k)$ included one and both programme-specific estimates had the same sign with posterior probability above 0\md{}9, differed if the CrI excluded one, and were otherwise uncertain. We interpreted the pooled odds ratio only where they agreed, and repeated the analysis with $\delta_k=0$ and in countries with both surveys.
-
-\textbf{Southern Africa.} No Southern African country met the inclusion rule, so we fitted one exploratory model pooling Lesotho, Namibia and South Africa with survey fixed effects (table~\ref{tab:predictors}).
-
-\textbf{Sensitivity analyses.} Added after an internal methodological review and pre-registered: crude odds ratios; the reduced socio-demographic model; women whose violence all occurred in the 12 months before the interview, so that lifetime help-seeking refers to recent violence; adjusted prevalence ratios (Poisson regression with robust standard errors)\cite{zou2004} and adjusted risk differences (linear probability models), pooled in the same way; one-stage models fitting all countries together, survey-weighted with fixed effects and as a mixed model with random slopes by country;\cite{bates2015} generalised variance inflation factors;\cite{fox1992} population-weighted proportions; and a wider definition of formal help (appendix).
+\textbf{Model checking and sensitivity analyses.} Every Bayesian model went through a full workflow:\cite{gelman2020,gabry2019} prior predictive checks, convergence diagnostics, posterior predictive checks with Bayesian $p$-values,\cite{gelman1996} and comparison with simpler models by DIC, WAIC and cross-validation.\cite{spiegelhalter2002,watanabe2010,vehtari2017} Pre-registered sensitivity analyses used crude, reduced and timing-aligned models, prevalence ratios\cite{zou2004} and risk differences, one-stage models,\cite{bates2015} alternative priors, population weights\cite{worldpop2025} and a wider definition of formal help. Equations, priors and all checks are in the appendix.
 
 \textbf{Pre-registration and software.} The analysis plan, all amendments (restriction to ages 15--24 to align with VACS; continuous age; the Bayesian implementation; four coding corrections; the sensitivity analyses) and their results were registered with time-stamped SHA-256 hashes before each analysis was run (appendix). Analyses used R 4.5 (survey, fixest, data.table, lme4, car) and Python 3 (NumPyro, JAX, ArviZ); the pooled estimates were reproduced independently with brms and Stan. Code is publicly available at \url{https://github.com/teklesam/disclosure-help-seeking-africa}.
 
@@ -578,7 +621,7 @@ DHS data are available from the DHS Program (\url{https://dhsprogram.com}) on re
 \bibitem{ellsberg2015} Ellsberg M, Arango DJ, Morton M, et al. Prevention of violence against women and girls: what does the evidence say? \textit{Lancet} 2015; \textbf{385}: 1555--66.
 \end{thebibliography}
 
-""" + APP.build(tableS1, n37d, n37v, SRC_TABLE, FOREST_FIGS) + r"""
+""" + APP.build(tableS1, n37d, n37v, SRC_TABLE, FOREST_FIGS, METHODS_DETAIL) + r"""
 \end{document}
 """
 tex = lancet(tex)

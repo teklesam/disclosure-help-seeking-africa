@@ -32,7 +32,7 @@ def table(label, caption, colspec, header, body, note, size="\\footnotesize", lo
             f"\\begin{{tabular}}{{{colspec}}}\n\\toprule\n{header}\\\\\n\\midrule\n{body}\n\\bottomrule\n\\end{{tabular}}\n"
             f"\\begin{{tablenotes}}\\footnotesize\n\\item {note}\n\\end{{tablenotes}}\n\\end{{threeparttable}}\n\\end{{table}}\n")
 
-def build(harm_rows, n37d, n37v, src_table="", forest_figs=""):
+def build(harm_rows, n37d, n37v, src_table="", forest_figs="", methods_detail=""):
     A2 = pd.read_csv(V3 / "A2_country_estimates.csv"); A3 = pd.read_csv(V3 / "A3_pooled_numpyro.csv")
     pool = lambda m, t, o="sought_any": A3[(A3.source == "DHS") & (A3.model == m) & (A3.outcome == o) & (A3.term == t)].iloc[0]
     T38 = pd.read_csv(P38 / "P38_pooled.csv")
@@ -44,6 +44,7 @@ def build(harm_rows, n37d, n37v, src_table="", forest_figs=""):
            "experienced violence, pooled with the hierarchical model of equation~\\ref{eq:hier}, as posterior medians with 95\\% credible intervals (CrIs).\n"]
 
     # ---------------- A. Data ----------------
+    out.append("\\setcounter{equation}{0}\\renewcommand{\\theequation}{S\\arabic{equation}}\n" + methods_detail + "\n")
     out.append("\\subsection*{A. Data and coding}\n"); out.append(src_table + "\n")
     W = pd.concat([pd.read_csv(R / f"data/derived/{f}", usecols=["survey", "country", "v012", "sought_any", "vtype", "d005"]) for f in ["women_disclosure.csv.gz", "women_disclosure_heldout.csv.gz"]])
     W = W[(W.survey != "SN_2019_8B") & W.sought_any.notna() & (W.vtype != "none") & (W.v012 <= 24)]
