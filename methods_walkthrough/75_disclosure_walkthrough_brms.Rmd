@@ -1,0 +1,571 @@
+---
+title: "Help-seeking after violence among young people in sub-Saharan Africa: the full analysis in R with brms"
+author: "Samuel Tekle"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_download: true
+    number_sections: true
+    theme: flatly
+    fig_caption: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center", fig.width = 8)
+```
+
+# What this document does
+
+This walks through every analysis in the disclosure paper, in order, with code that can be read and run line by line:
+
+| Step | Analysis | Paper |
+|---|---|---|
+| 3 | Build the analysis sample (DHS young women, VACS girls and boys) | Methods, Data |
+| 4 | Disclosure cascade with survey-design 95% CIs | Equation 1; Figures 1 and 2 |
+| 5 | Country models: survey-weighted logistic regression | Equations 2 to 4 |
+| 6 | Bayesian pooling of countries within regions with **brms** | Equation 5; Table 2; Figures 3 and 4 |
+| 7 | Replication in two halves of countries | Methods, Replication |
+| 8 | Southern Africa exploratory model | Table 2 |
+| 9 | VACS: girls compared with boys | Results |
+| 10 | Trends across survey rounds | Results, Change over time |
+| 11 | Harmonised pooling of DHS and VACS | Equation 7; Table S1 |
+
+The paper's pooled results were fitted with NumPyro in Python. Here the same hierarchical model is written in **brms**, and at each step the brms estimates are placed next to the published ones, so you can see they agree. Small differences in the second decimal are expected from Monte Carlo error.
+
+**The idea of the analysis in one paragraph.** Each country's surveys are analysed on their own first (step 5), because sampling, questionnaires and services differ between countries. Each country model gives an odds ratio and its standard error for every factor. Those country odds ratios are then combined in a Bayesian model in which countries sit within UN regions (step 6). This gives a regional and an all-region odds ratio, and tells us whether the regions agree.
+
+# Step 1 - Loading the packages
+
+```{r packages}
+library(pacman)             # "pacman" package manager - loads several packages at once
+
+pacman::p_load(
+
+  # project and file management
+  #############################
+  here,       # file paths relative to the project folder
+  rio,        # import of csv, csv.gz, dta and others
+
+  # data management and tables
+  ############################
+  tidyverse,  # dplyr, tidyr, ggplot2, purrr, readr
+  knitr,      # kable() tables
+  kableExtra, # nicer kable tables
+
+  # survey and frequentist models
+  ###############################
+  survey,     # design-based proportions and CIs (svydesign, svyciprop)
+  fixest,     # fast weighted logistic regression with fixed effects and clustered SEs
+
+  # Bayesian models
+  #################
+  brms,       # Bayesian regression models (Stan)
+  cmdstanr,   # Stan backend used by brms
+  posterior,  # summarise posterior draws
+  bayesplot   # trace plots and posterior checks
+)
+
+here::i_am("analysis/75_disclosure_walkthrough_brms.Rmd")   # the project folder is "OMS DHS Births Climate Policy"
+options(brms.backend = "cmdstanr", mc.cores = 4)
+
+# keep the compiled Stan programs in one folder: models with the same structure are compiled once and reused
+options(cmdstanr_write_stan_file_dir = here("outputs", "brms_walkthrough", "stan"))
+dir.create(here("outputs", "brms_walkthrough", "stan"), showWarnings = FALSE, recursive = TRUE)
+theme_set(theme_minimal(base_size = 11))
+
+# folder where fitted brms models are saved, so knitting a second time is fast
+fit_dir <- here("outputs", "brms_walkthrough")
+dir.create(fit_dir, showWarnings = FALSE, recursive = TRUE)
+
+# the published results, used to check each step
+res_dir <- here("outputs", "tables", "P33_youth_v3")
+```
+
+# Step 2 - Helper functions
+
+Three small functions are used throughout. Reading them once makes the rest easy to follow.
+
+```{r helpers}
+# 1. Odds ratio with its 95% interval as text, e.g. "2.13 (1.51-2.82)"
+or_text <- function(est, lo, hi) sprintf("%.2f (%.2f-%.2f)", est, lo, hi)
+
+# 2. Fit one country model (equations 2 to 4 in the paper).
+#    Survey-weighted logistic regression, survey-round fixed effects, SEs clustered by PSU.
+#    Returns one row per coefficient: log odds ratio (est) and its standard error (se).
+#    Pre-specified rule: at least min_n respondents and min_events outcome events; SE above 5 = separation, dropped.
+fit_country <- function(data, outcome, rhs, fe = "survey", cluster = ~clus, min_n = 300, min_events = 30) {
+  empty <- tibble(term = character(), est = numeric(), se = numeric(), n = integer())   # returned when a country is not modelled
+  data <- data %>% filter(!is.na(.data[[outcome]]))
+  if (nrow(data) < min_n || sum(data[[outcome]]) < min_events) return(empty)
+  f <- as.formula(paste(outcome, "~", rhs, if (!is.null(fe)) paste("|", fe) else ""))
+  m <- tryCatch(feglm(f, data = data, family = binomial("logit"), weights = ~w, cluster = cluster,
+                      notes = FALSE, warn = FALSE), error = function(e) NULL)
+  if (is.null(m)) return(empty)
+  tibble(term = names(coef(m)), est = unname(coef(m)), se = unname(se(m)), n = nobs(m)) %>%
+    filter(is.finite(se), se < 5)
+}
+
+# 3. UN regions used for pooling
+un_region <- c(BF = "West", BJ = "West", CI = "West", GH = "West", GM = "West", GN = "West", LB = "West",
+               ML = "West", MR = "West", NG = "West", SL = "West", SN = "West", TG = "West", NI = "West",
+               AO = "Central", CD = "Central", CM = "Central", GA = "Central", TD = "Central",
+               BU = "East", ET = "East", KE = "East", KM = "East", MD = "East", MW = "East", MZ = "East",
+               RW = "East", TZ = "East", UG = "East", ZM = "East", ZW = "East",
+               LS = "Southern", NM = "Southern", SZ = "Southern", ZA = "Southern")
+```
+
+# Step 3 - The analysis sample
+
+## DHS: young women aged 15-24 who experienced violence
+
+The DHS file has one row per woman interviewed in the domestic violence module. We keep women who reported physical or sexual violence and were asked the help-seeking questions.
+
+```{r dhs-data}
+dhs_raw <- bind_rows(
+  import(here("data", "derived", "women_disclosure.csv.gz")),
+  import(here("data", "derived", "women_disclosure_heldout.csv.gz"))
+)
+
+dhs <- dhs_raw %>%
+  filter(!is.na(sought_any),            # asked the help-seeking questions
+         vtype != "none",               # experienced physical or sexual violence
+         survey != "SN_2019_8B") %>%    # a one-record file, excluded
+  # "Told anyone" can only be separated from "sought help" where the survey asked d128;
+  # in surveys where told is never different from sought, told is set to missing.
+  group_by(survey) %>%
+  mutate(told_informative = mean(told != sought_any, na.rm = TRUE) >= 0.01) %>%
+  ungroup() %>%
+  mutate(told = if_else(told_informative %in% TRUE, told, NA_real_)) %>%
+  filter(v012 <= 24) %>%                # young women 15-24
+  mutate(
+    w       = d005 / 1e6,                                    # domestic violence module weight
+    clus    = paste(survey, v001),                           # primary sampling unit (PSU)
+    region  = un_region[country],
+    agegrp  = v012 - 20,                                     # age in years, centred at 20
+    educ    = factor(case_when(v106 == 0 ~ "none", v106 == 1 ~ "primary", TRUE ~ "secondary+"),
+                     levels = c("none", "primary", "secondary+")),
+    wealthq = v190,                                          # wealth quintile 1-5
+    urban   = as.integer(v025 == 1),
+    marital = factor(case_when(v501 %in% 1:2 ~ "current", v501 == 0 ~ "never", TRUE ~ "former"),
+                     levels = c("current", "former", "never")),
+    kids3   = as.integer(children >= 3),
+    decisions2 = if_else(v501 %in% 1:2 & !is.na(decisions2), decisions2, 0),   # only asked of women in union
+    vtype   = factor(vtype, levels = c("physical", "sexual", "both")),
+    perp    = factor(perp, levels = c("partner", "nonpartner", "both")),
+    recent  = if_else(is.na(victim_12m), NA_integer_, as.integer(victim_12m)),
+    inj_na  = as.integer(is.na(injury)),
+    injury  = if_else(is.na(injury), 0, injury)
+  )
+
+dhs %>%
+  summarise(women = n(), surveys = n_distinct(survey), countries = n_distinct(country)) %>%
+  kable(caption = "DHS analysis sample (paper: 49 313 women, 64 surveys, 32 countries)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## VACS: girls and boys aged 13-24
+
+VACS asks about sexual and physical violence separately, so each person can appear in the sexual-violence analysis, the physical-violence analysis, or both.
+
+```{r vacs-data}
+vacs <- import(path.expand("~/Documents/OMS VACS Climate Violence/data/processed/vacs_disclosure_harmonised.csv")) %>%
+  mutate(region = un_region[country],
+         age1824 = age - 18,                       # age in years, centred at 18 (keeps the old name)
+         clus = psu) %>%
+  group_by(country) %>%
+  mutate(w = w / mean(w, na.rm = TRUE)) %>%        # weights normalised within country
+  ungroup()
+
+vacs %>%
+  summarise(respondents = n(), countries = n_distinct(country),
+            sexual_violence = sum(sv_victim == 1), physical_violence = sum(pv_victim == 1)) %>%
+  kable(caption = "VACS sample (paper: 48 910 respondents; 4 832 sexual and 14 264 physical violence)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Step 4 - The disclosure cascade (equation 1)
+
+For each step of the cascade we estimate the survey-weighted percentage. The 95% CI is computed on the logit scale (`method = "logit"`), because percentages near zero, like formal help, have skewed sampling distributions. The design is declared with `svydesign()`: PSUs as clusters and the module weight.
+
+```{r cascade}
+cascade_one <- function(outcome) {
+  d   <- dhs %>% filter(!is.na(.data[[outcome]]))
+  des <- svydesign(ids = ~clus, weights = ~w, data = d, nest = TRUE)
+  f   <- as.formula(paste0("~", outcome))
+  overall <- svyciprop(f, des, method = "logit")
+  by_country <- svyby(f, ~country, des, svyciprop, method = "logit", vartype = "ci", na.rm = TRUE)
+  list(
+    overall = tibble(outcome = outcome, pct = 100 * as.numeric(overall),
+                     lo = 100 * confint(overall)[1], hi = 100 * confint(overall)[2], n = nrow(d)),
+    country = as_tibble(by_country) %>% setNames(c("country", "pct", "lo", "hi")) %>%
+      mutate(outcome = outcome, across(c(pct, lo, hi), ~ 100 * .x))
+  )
+}
+
+cascade <- map(c("told", "sought_any", "formal"), cascade_one)
+cascade_overall  <- map_dfr(cascade, "overall")
+cascade_country  <- map_dfr(cascade, "country")
+
+cascade_overall %>%
+  mutate(`% (95% CI)` = sprintf("%.1f (%.1f-%.1f)", pct, lo, hi)) %>%
+  select(outcome, n, `% (95% CI)`) %>%
+  kable(caption = "Cascade among young women (paper: told 46.1, sought any 32.9, formal 2.5)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+A quick forest plot of seeking any help by country (the published Figure 2 is the polished version):
+
+```{r cascade-plot, fig.height = 7}
+cascade_country %>%
+  filter(outcome == "sought_any") %>%
+  mutate(region = un_region[country], country = fct_reorder(country, pct)) %>%
+  ggplot(aes(x = pct, y = country)) +
+  geom_vline(xintercept = cascade_overall$pct[cascade_overall$outcome == "sought_any"], linetype = "dashed", colour = "firebrick") +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0) +
+  geom_point(shape = 15, size = 2) +
+  facet_grid(region ~ ., scales = "free_y", space = "free_y") +
+  labs(x = "Sought any help after violence, % (95% CI, survey design)", y = NULL,
+       caption = "Dashed line = all countries combined")
+```
+
+Check against the published file:
+
+```{r cascade-check}
+published <- import(file.path(res_dir, "A8_5_dhs_cascade_ci.csv")) %>% filter(level == "country")
+cascade_country %>%
+  inner_join(published, by = c("country", "outcome"), suffix = c("_here", "_paper")) %>%
+  summarise(countries_compared = n(), largest_difference_in_pct_points = max(abs(pct_here - pct_paper)))
+```
+
+# Step 5 - Country models (equations 2 to 4)
+
+In each country we fit one survey-weighted logistic regression with all pre-specified predictors together, so each odds ratio is adjusted for the others. Survey-round fixed effects (`| survey`) compare women within the same round. Standard errors are clustered by PSU.
+
+Two models are fitted:
+
+* **main model**: all young women who experienced violence;
+* **partner model**: women with partner violence, adding injury, severe violence, partner alcohol use and controlling behaviours (asked about partners only).
+
+```{r country-models}
+rhs_main    <- "agegrp + educ + wealthq + urban + marital + working + kids3 + media + decisions2 + justify + vtype + perp + recent + private"
+rhs_partner <- paste(rhs_main, "+ severe + injury + inj_na + alcohol + controlling3")
+
+country_estimates <- dhs %>%
+  group_by(country, region) %>%
+  group_modify(~ bind_rows(
+    fit_country(.x, "sought_any", rhs_main)                                       %>% mutate(model = "main"),
+    fit_country(.x %>% filter(perp %in% c("partner", "both")), "sought_any", rhs_partner) %>% mutate(model = "partner")
+  )) %>%
+  ungroup()
+
+country_estimates %>%
+  count(model, name = "rows") %>%
+  left_join(country_estimates %>% group_by(model) %>% summarise(countries = n_distinct(country)), by = "model") %>%
+  kable(caption = "Country models for seeking any help (paper: 26 countries main, 21 partner)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+These are exactly the country estimates used in the paper:
+
+```{r country-check}
+a2 <- import(file.path(res_dir, "A2_country_estimates.csv")) %>% filter(source == "DHS", outcome == "sought_any")
+country_estimates %>%
+  inner_join(a2, by = c("country", "model", "term"), suffix = c("_here", "_paper")) %>%
+  summarise(estimates_compared = n(), largest_difference = max(abs(est_here - est_paper)))
+```
+
+# Step 6 - Bayesian pooling of countries within regions with brms (equation 5)
+
+## The model
+
+For one factor, country *c* gives a log odds ratio $\hat\beta_c$ with standard error $s_c$. The model is
+
+$$\hat\beta_c \sim N(\theta_c, s_c^2), \qquad \theta_c = \mu + u_{r(c)} + v_c, \qquad u_r \sim N(0, \omega^2), \qquad v_c \sim N(0, \tau^2)$$
+
+* $\mu$: pooled (all-region) log odds ratio
+* $u_r$: how far region *r* is from the pooled value; $\omega$ = between-region SD
+* $v_c$: how far country *c* is from its region; $\tau$ = between-country SD
+* priors: $\mu \sim N(0, 1)$; $\tau, \omega \sim$ half-Normal(0, 0.5)
+
+In **brms** this is a meta-analysis formula. `est | se(se)` tells brms that each row is an estimate with a known standard error; `(1 | region)` and `(1 | country)` are the two random effects.
+
+```{r brms-model}
+pool_formula <- bf(est | se(se) ~ 1 + (1 | region) + (1 | country))
+
+pool_priors <- c(prior(normal(0, 1),   class = "Intercept"),
+                 prior(normal(0, 0.5), class = "sd"))     # brms keeps SDs positive, so this is half-Normal(0, 0.5)
+```
+
+## Fitting the model for injury
+
+```{r brms-injury}
+injury_data <- country_estimates %>% filter(model == "partner", term == "injury")
+
+# one function fits the pooling model to any set of country estimates and saves the fit
+fit_pool <- function(data, name, formula = pool_formula, priors = pool_priors) {
+  brm(formula, data = data, prior = priors,
+      chains = 4, iter = 4000, warmup = 2000, seed = 20261023,   # 4 chains x (2000 warm-up + 2000 draws)
+      control = list(adapt_delta = 0.995, max_treedepth = 12),   # small steps, as in the paper
+      file = file.path(fit_dir, name), file_refit = "on_change", refresh = 0, silent = 2)
+}
+
+fit_injury <- fit_pool(injury_data, "pool_injury")
+
+summary(fit_injury)
+```
+
+**Reading the output.** `Intercept` is $\mu$ on the log odds scale; `sd(Intercept)` under `~region` is $\omega$ and under `~country` is $\tau$. Rhat should be below 1.01 and the ESS columns above 400.
+
+## From the posterior to odds ratios
+
+`as_draws_df()` gives every posterior draw. We exponentiate to get odds ratios and summarise with the median and the 2.5% and 97.5% quantiles (the 95% credible interval).
+
+```{r brms-injury-or}
+draws <- as_draws_df(fit_injury)
+
+pooled_or <- exp(draws$b_Intercept)
+quantile(pooled_or, c(0.5, 0.025, 0.975))   # paper: 2.13 (1.51-2.82)
+
+# regional odds ratios = pooled + region effect
+coef(fit_injury, robust = TRUE)$region[, , "Intercept"] %>%
+  as_tibble(rownames = "region") %>%
+  transmute(region, OR = or_text(exp(Estimate), exp(Q2.5), exp(Q97.5))) %>%
+  kable(caption = "Regional odds ratios for injury (paper Table 2: West 2.23, Central 2.05, East 2.16)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## Checking the sampler
+
+```{r brms-diagnostics, fig.height = 4}
+mcmc_trace(fit_injury, pars = c("b_Intercept", "sd_region__Intercept", "sd_country__Intercept"))
+nuts_params(fit_injury) %>% filter(Parameter == "divergent__") %>% summarise(divergent_transitions = sum(Value))
+```
+
+## All four main factors
+
+The same model is fitted for each factor with `fit_pool()`. Because the model structure is identical, Stan compiles it only once.
+
+```{r brms-four}
+pool_factor <- function(model_name, term_name) {
+  d <- country_estimates %>% filter(model == model_name, term == term_name)
+  fit <- fit_pool(d, paste0("pool_", term_name))
+  dr <- as_draws_df(fit)
+  regions <- coef(fit, robust = TRUE)$region[, , "Intercept"] %>% as_tibble(rownames = "region")
+  tibble(term = term_name, countries = nrow(d),
+         pooled = or_text(exp(median(dr$b_Intercept)), exp(quantile(dr$b_Intercept, .025)), exp(quantile(dr$b_Intercept, .975))),
+         tau = median(dr$sd_country__Intercept),
+         max_rhat = max(brms::rhat(fit), na.rm = TRUE)) %>%
+    bind_cols(regions %>% transmute(region, OR = or_text(exp(Estimate), exp(Q2.5), exp(Q97.5))) %>%
+                pivot_wider(names_from = region, values_from = OR))
+}
+
+four_factors <- bind_rows(
+  pool_factor("partner", "injury"),
+  pool_factor("partner", "severe"),
+  pool_factor("main", "vtypeboth"),
+  pool_factor("main", "maritalformer")
+)
+
+four_factors %>%
+  kable(digits = 2, caption = "brms results. Paper (NumPyro): injury 2.13 (1.51-2.82); severe 1.63 (1.19-2.17); both 1.90 (1.34-2.54); formerly in union 1.71 (1.17-2.33)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+## A forest plot of the country estimates for injury
+
+```{r forest-injury, fig.height = 6}
+injury_data %>%
+  mutate(OR = exp(est), lo = exp(est - 1.96 * se), hi = exp(est + 1.96 * se),
+         country = fct_reorder(country, OR)) %>%
+  ggplot(aes(x = OR, y = country)) +
+  geom_vline(xintercept = 1) +
+  geom_vline(xintercept = median(pooled_or), linetype = "dashed", colour = "firebrick") +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0) +
+  geom_point(aes(size = n), shape = 15, colour = "grey50") +
+  scale_x_log10() +
+  facet_grid(region ~ ., scales = "free_y", space = "free_y") +
+  labs(x = "Odds ratio for seeking any help after injury (log scale, 95% CI)", y = NULL, size = "Women",
+       caption = "Solid line = no association; dashed line = pooled brms estimate")
+```
+
+# Step 7 - Replication in two halves of countries
+
+Before any outcome was analysed, countries were split at random (seed 20261015) into a discovery and a held-out set. A finding is replicated if its credible interval excludes 1, with the same sign, in both sets.
+
+```{r replication}
+split <- import(here("data", "derived", "split_countries.csv"))
+
+replicate_factor <- function(model_name, term_name) {
+  map_dfr(c("discovery", "held-out"), function(s) {
+    d <- country_estimates %>% filter(model == model_name, term == term_name,
+                                      country %in% split$country[split$set == s])
+    fit <- fit_pool(d, paste0("rep_", term_name, "_", s))
+    b <- as_draws_df(fit)$b_Intercept
+    tibble(term = term_name, set = s, countries = nrow(d),
+           OR = or_text(exp(median(b)), exp(quantile(b, .025)), exp(quantile(b, .975))))
+  })
+}
+
+bind_rows(replicate_factor("partner", "injury"), replicate_factor("partner", "severe"),
+          replicate_factor("main", "vtypeboth")) %>%
+  pivot_wider(names_from = set, values_from = c(countries, OR)) %>%
+  kable(caption = "Replication: both sets should exclude 1 in the same direction") %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Step 8 - Southern Africa (exploratory)
+
+No Southern African country has enough young women for its own model, so Lesotho, Namibia and South Africa are pooled in one model with survey fixed effects.
+
+```{r southern}
+southern <- dhs %>% filter(country %in% c("LS", "NM", "ZA"), perp %in% c("partner", "both"))
+fit_southern <- feglm(as.formula(paste("sought_any ~", rhs_partner, "| survey")), data = southern,
+                      family = binomial("logit"), weights = ~w, cluster = ~clus)
+coeftable(fit_southern)["injury", ] %>%
+  { or_text(exp(.[1]), exp(.[1] - 1.96 * .[2]), exp(.[1] + 1.96 * .[2])) }   # paper: 2.68 (1.12-6.42)
+```
+
+# Step 9 - VACS: girls compared with boys
+
+In each VACS country we model seeking help after sexual violence among those who experienced it, with sex, age, rural residence, a female household head and experiencing both types of violence. VACS has one round per country, so there are no round fixed effects. Kenya has no rural variable, so rural is left out of Kenya's model only.
+
+```{r vacs-models}
+vacs_country <- vacs %>%
+  filter(sv_victim == 1) %>%
+  group_by(country, region) %>%
+  group_modify(~ {
+    rhs <- c("female", "age1824", if (any(!is.na(.x$rural))) "rural", "hh_female", "poly")
+    fit_country(.x, "sv_sought", paste(rhs, collapse = " + "), fe = NULL, min_n = 150, min_events = 15)
+  }) %>%
+  ungroup()
+
+girls_data <- vacs_country %>% filter(term == "female")
+fit_girls <- fit_pool(girls_data, "pool_vacs_girls")
+b <- as_draws_df(fit_girls)$b_Intercept
+tibble(countries = nrow(girls_data),
+       `girls vs boys, OR (95% CrI)` = or_text(exp(median(b)), exp(quantile(b, .025)), exp(quantile(b, .975)))) %>%
+  kable(caption = "Seeking help after sexual violence, girls vs boys (paper: 8.36, 1.60-42.56)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+The interval is wide because few boys report sexual violence.
+
+# Step 10 - Trends across survey rounds
+
+In the 19 countries with at least two DHS rounds, survey year is added to the model as decades since 2015, so its odds ratio is the change per decade. Year varies between rounds, so this model has no round fixed effects.
+
+```{r trends}
+trend_data <- dhs %>%
+  group_by(survey) %>% mutate(yr10 = (1900 + mean(v008, na.rm = TRUE) / 12 - 2015) / 10) %>% ungroup() %>%
+  group_by(country) %>% filter(n_distinct(survey) >= 2) %>% ungroup()
+
+trend_country <- trend_data %>%
+  group_by(country, region) %>%
+  group_modify(~ {
+    if (n_distinct(.x$survey) < 2) return(tibble())
+    fit_country(.x, "sought_any", paste("yr10 +", rhs_main), fe = NULL, min_n = 0, min_events = 20) %>% filter(term == "yr10")
+  }) %>%
+  ungroup()
+
+fit_trend <- fit_pool(trend_country, "pool_trend")
+b <- as_draws_df(fit_trend)$b_Intercept
+tibble(countries = nrow(trend_country),
+       `OR per decade (95% CrI)` = or_text(exp(median(b)), exp(quantile(b, .025)), exp(quantile(b, .975)))) %>%
+  kable(caption = "Trend in seeking any help (paper: 0.74, 0.54-1.03)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Step 11 - Pooling DHS and VACS (equation 7)
+
+Percentages are never pooled across the two surveys, because they ask different people different questions. Associations can be pooled within what both surveys share: **young women aged 15-24**, the outcomes **told anyone** and **sought any help**, and four factors, **age, rural residence, female household head and both types of violence**.
+
+## Building the harmonised data
+
+```{r harm-data}
+hh_head <- import(here("data", "derived", "women_hhhead.csv.gz")) %>% mutate(caseid = as.character(caseid))
+
+dhs_h <- dhs %>%
+  mutate(caseid = as.character(caseid)) %>%
+  left_join(hh_head, by = c("survey", "caseid")) %>%
+  mutate(age = v012 - 20, rural = as.integer(v025 == 2), both = as.integer(vtype == "both"))
+
+# VACS girls 15-24: an outcome is 1 if she told (or sought help) about ANY type of violence she experienced
+any_of2 <- function(a, b) if_else(is.na(a) & is.na(b), NA_real_, as.numeric(pmax(a, b, na.rm = TRUE) > 0))
+
+vacs_h <- vacs %>%
+  filter(female == 1, age >= 15, age <= 24, sv_victim == 1 | pv_victim == 1) %>%
+  mutate(told       = any_of2(if_else(sv_victim == 1, sv_tell, NA_real_),   if_else(pv_victim == 1, pv_tell, NA_real_)),
+         sought_any = any_of2(if_else(sv_victim == 1, sv_sought, NA_real_), if_else(pv_victim == 1, pv_sought, NA_real_)),
+         age = age - 20, both = as.integer(poly == 1))
+
+c(DHS_women = nrow(dhs_h), VACS_girls = nrow(vacs_h))   # paper: 49 313 and 10 068
+```
+
+## Country models in each survey
+
+```{r harm-country}
+harm_rhs <- function(d) {
+  keep <- c("age", "rural", "hh_female", "both")
+  keep <- keep[map_lgl(keep, ~ n_distinct(na.omit(d[[.x]])) > 1)]   # drops rural for Kenya VACS
+  paste(keep, collapse = " + ")
+}
+
+harm_country <- bind_rows(
+  dhs_h %>% group_by(country, region) %>%
+    group_modify(~ map_dfr(c("told", "sought_any"), function(y)
+      fit_country(.x, y, harm_rhs(.x)) %>% mutate(outcome = y))) %>%
+    ungroup() %>% mutate(source = "DHS"),
+  vacs_h %>% group_by(country, region) %>%
+    group_modify(~ map_dfr(c("told", "sought_any"), function(y)
+      fit_country(.x, y, harm_rhs(.x), fe = NULL, min_n = 150, min_events = 15) %>% mutate(outcome = y))) %>%
+    ungroup() %>% mutate(source = "VACS")
+) %>%
+  filter(term %in% c("age", "rural", "hh_female", "both")) %>%
+  mutate(programme = if_else(source == "VACS", 0.5, -0.5),   # centred programme indicator
+         unit = paste(source, country))
+```
+
+## The pooled model with a programme term
+
+$$\theta_j = \mu + \delta x_j + u_{r(j)} + v_j, \qquad x_j = -\tfrac12 \text{ (DHS)}, +\tfrac12 \text{ (VACS)}$$
+
+Because $x_j$ is centred, $\exp(\mu)$ is the pooled odds ratio with the two surveys weighted equally, $\exp(\mu \mp \delta/2)$ are the DHS and VACS odds ratios, and $\exp(\delta)$ is their ratio. The surveys **agree** if the interval for $\exp(\delta)$ includes 1 and both survey-specific estimates have the same sign with probability above 0.9; they **differ** if the interval excludes 1.
+
+```{r harm-brms}
+harm_formula <- bf(est | se(se) ~ 1 + programme + (1 | region) + (1 | unit))
+harm_priors  <- c(prior(normal(0, 1),   class = "Intercept"),
+                  prior(normal(0, 1),   class = "b"),        # delta
+                  prior(normal(0, 0.5), class = "sd"))
+
+
+pool_harm <- function(y, t) {
+  d   <- harm_country %>% filter(outcome == y, term == t)
+  fit <- fit_pool(d, paste0("harm_", y, "_", t), harm_formula, harm_priors)
+  dr  <- as_draws_df(fit)
+  mu <- dr$b_Intercept; delta <- dr$b_programme
+  q  <- function(x) or_text(exp(median(x)), exp(quantile(x, .025)), exp(quantile(x, .975)))
+  ratio_lo <- exp(quantile(delta, .025)); ratio_hi <- exp(quantile(delta, .975))
+  same_sign <- mean(sign(mu - delta / 2) == sign(mu + delta / 2))
+  tibble(outcome = y, factor = t, DHS = q(mu - delta / 2), VACS = q(mu + delta / 2), `ratio VACS/DHS` = q(delta),
+         pooled = q(mu),
+         surveys = case_when(ratio_lo > 1 | ratio_hi < 1 ~ "differ", same_sign > 0.9 ~ "agree", TRUE ~ "uncertain"))
+}
+
+harm_results <- expand_grid(y = c("sought_any", "told"), t = c("both", "hh_female", "rural", "age")) %>%
+  pmap_dfr(~ pool_harm(..1, ..2))
+
+harm_results %>%
+  kable(caption = "Harmonised DHS-VACS pooling (compare with Table S1 of the paper)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+**What this shows.** Experiencing both physical and sexual violence roughly doubles the odds of seeking help in both surveys, so the pooled estimate can be used. For telling anyone, the association is stronger in VACS, possibly because VACS asks about telling once for each type of violence.
+
+# Session information
+
+```{r session}
+sessionInfo()
+```

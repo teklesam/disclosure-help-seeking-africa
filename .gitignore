@@ -1,0 +1,20 @@
+# Never commit survey microdata, GPS, derived data or outputs (DHS and VACS licences)
+*.csv
+*.csv.gz
+*.dta
+*.sav
+*.zip
+*.gpkg
+*.tif
+*.nc
+*.png
+*.pdf
+*.html
+data/
+outputs/
+
+# allow the result figures shown in the README (aggregate estimates only)
+!docs/figures/*.png
+# local, unpublished author list
+authors_local.tex
+.DS_Store

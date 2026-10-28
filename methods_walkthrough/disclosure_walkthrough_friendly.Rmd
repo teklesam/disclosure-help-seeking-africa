@@ -1,0 +1,523 @@
+---
+title: "Who seeks help after violence among young people in Africa?"
+subtitle: "A friendly, step-by-step walkthrough of the analysis (manuscript v3)"
+author: "Samuel Tekle"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: show
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center", out.width = "95%")
+```
+
+<style>
+.box { background: #F2F6FA; border-left: 4px solid #0072B2; padding: 10px 14px; margin: 12px 0; }
+.warn { background: #FBF3EC; border-left: 4px solid #D55E00; padding: 10px 14px; margin: 12px 0; }
+</style>
+
+# Read this first
+
+**What this document does.** It shows, step by step, how every number in the paper is made: from loading the survey files to the final estimates. Each step has the same layout:
+
+* **What we do**: one or two plain sentences.
+* **Why**: the reason for the step.
+* **Code**: short, commented R code you can run.
+* **Result**: a table or figure. **Every estimate is shown with its 95% interval.**
+
+<div class="box">
+**How to read the uncertainty.**
+
+- **95% CI (confidence interval)** is used for survey percentages and single-country models. If we repeated the survey many times, 95% of such intervals would contain the true value.
+- **95% CrI (credible interval)** is used for the pooled Bayesian estimates. Given the data and model, there is a 95% probability that the true value lies inside.
+- **Odds ratio (OR) = 1** means no association. Above 1 means *more* likely to seek help than the reference group; below 1 means *less* likely. An interval that crosses 1 means we cannot rule out "no association".
+</div>
+
+**Data.**
+
+- **DHS:** Demographic and Health Surveys, domestic violence module, **young women aged 15–24**, 64 surveys from 32 countries, 2004–2025.
+- **VACS:** Violence Against Children and Youth Surveys, **girls and boys aged 13–24**, 8 countries, 2013–2023.
+
+**Where the full scripts are.** The heavy model fitting runs in project scripts; this document re-runs small examples live and loads the saved results for the rest:
+
+- `analysis/50_disclosure_predictors.R`: country models.
+- `analysis/pool_numpyro.py` and `58_A8_pool_numpyro.py`: Bayesian pooling.
+- `analysis/59_A8_cascade_ci.R`: percentages with CIs.
+- `analysis/52`, `57`: trends.
+- `analysis/63`–`68` and `65_ehf_monthly.py`: climate (time-aligned reporting chain, Excess Heat Factor, prolonged drought).
+
+# Set up
+
+**What we do.** Load the packages and tell R where the files are.
+
+```{r packages}
+library(dplyr)       # readable data steps (filter, mutate, summarise)
+library(ggplot2)     # figures
+library(survey)      # percentages with survey-design confidence intervals
+library(fixest)      # weighted logistic regression with clustered standard errors
+library(knitr)       # tables
+library(kableExtra)  # nicer tables
+
+project  <- path.expand("~/Documents/OMS DHS Births Climate Policy")
+results  <- file.path(project, "outputs/tables/P33_youth_v3")    # saved results (youth, v3)
+figures  <- file.path(project, "outputs/figures/disclosure_v3")
+tables   <- file.path(project, "outputs/tables")
+
+# small helper: "estimate (lower–upper)"
+show_ci <- function(est, lo, hi, digits = 1) sprintf(paste0("%.", digits, "f (%.", digits, "f to %.", digits, "f)"), est, lo, hi)
+
+# colours used in every figure (colour-blind safe)
+region_colours <- c(West = "#0072B2", Central = "#009E73", East = "#E69F00", Southern = "#CC79A7")
+```
+
+**Regions.** Countries are grouped into the four UN subregions of sub-Saharan Africa.
+
+**Why regions?**
+
+- The paper asks whether the **same things predict help-seeking in different parts of Africa**. To answer that, "parts of Africa" must be defined in advance and independently of our data.
+- The UN M49 subregions are the standard, neutral definition.
+
+```{r regions}
+region_of <- c(BF = "West", BJ = "West", CI = "West", GH = "West", GM = "West", GN = "West", LB = "West", ML = "West",
+               MR = "West", NG = "West", SL = "West", SN = "West", TG = "West",
+               AO = "Central", CD = "Central", CM = "Central", GA = "Central", TD = "Central",
+               BU = "East", ET = "East", KE = "East", KM = "East", MD = "East", MW = "East", MZ = "East",
+               RW = "East", TZ = "East", UG = "East", ZM = "East", ZW = "East",
+               LS = "Southern", NM = "Southern", SZ = "Southern", ZA = "Southern")
+```
+
+# Load the data
+
+**What we do.** Read the harmonised DHS file (one row per woman interviewed with the violence module) and the harmonised VACS file.
+
+**Why.** The original survey files differ from country to country. Two Python builders turn them into one common format (`41_build_disclosure_women.py`, `20_build_vacs_disclosure.py`).
+
+```{r load}
+dhs <- bind_rows(
+  readr::read_csv(file.path(project, "data/derived/women_disclosure.csv.gz"), show_col_types = FALSE),
+  readr::read_csv(file.path(project, "data/derived/women_disclosure_heldout.csv.gz"), show_col_types = FALSE))
+
+vacs <- readr::read_csv(path.expand("~/Documents/OMS VACS Climate Violence/data/processed/vacs_disclosure_harmonised.csv"),
+                        show_col_types = FALSE)
+
+c(DHS_women_with_violence_module = nrow(dhs), VACS_young_people = nrow(vacs))
+```
+
+# Who is in the analysis, and how things are measured
+
+## The sample
+
+**What we do.** Keep young women aged 15–24 who **ever experienced physical or sexual violence by anyone** (partner or non-partner) and who were asked about help-seeking.
+
+**Two data fixes:**
+
+1. A one-person file (Senegal 2019) is removed.
+2. In 8 older surveys the question "did you tell anyone?" was not asked or never answered, so "told anyone" is set to missing there.
+
+```{r sample}
+young <- dhs |>
+  filter(!is.na(sought_any), vtype != "none", survey != "SN_2019_8B") |>   # ever-victims asked about help
+  group_by(survey) |>
+  mutate(told_question_works = mean(told != sought_any, na.rm = TRUE) >= 0.01) |>   # was "told anyone" really asked?
+  ungroup() |>
+  mutate(told = if_else(told_question_works, told, NA_real_)) |>
+  filter(v012 <= 24) |>                                                     # ages 15-24
+  mutate(weight  = d005 / 1e6,                                              # DHS violence-module weight
+         cluster = paste(survey, v001),                                     # village/neighbourhood (sampling cluster)
+         region  = region_of[country])
+
+young |> summarise(women = n(), surveys = n_distinct(survey), countries = n_distinct(country))
+```
+
+<div class="box">
+**Does the DHS ask about violence by anyone?** Yes. Although it is called the "domestic violence module", it asks about violence by husbands or partners **and** by anyone else: physical violence since age 15 by anyone, and forced sex by anyone.
+
+**Why compare DHS with VACS at all?** They are *compared side by side, never merged*:
+
+- DHS covers young women only, all perpetrators, and help-seeking for any violence they experienced.
+- VACS covers girls and boys, with separate questions for sexual and physical violence.
+
+Together they show whether the same patterns hold in two independent survey programmes.
+</div>
+
+## Outcomes
+
+| Outcome | Exact definition (DHS) |
+|---|---|
+| **Told anyone** | Sought help from anyone **or** told anyone else about the violence |
+| **Sought any help** | Sought help from **any** source: family, friends, neighbours, religious or traditional leaders, police, health workers, and others |
+| **Sought formal help** | Sought help from police, doctor/health worker, lawyer/court, social services, an NGO or a helpline. Religious and traditional leaders are **informal**, but they still count as "sought any help". |
+
+In VACS: told anyone, knew where to get help, sought help, and received services, each asked separately for sexual and for physical violence.
+
+## Predictors and their reference groups
+
+Every odds ratio compares one group with a **reference group**:
+
+| Predictor | Compared with (reference) | Definition |
+|---|---|---|
+| Injury from partner violence | No injury | Cuts, bruises, aches, eye injuries, sprains, dislocations or burns (d110a, d110b, d110d) |
+| Severe physical violence | Less severe or none | Choked or burned on purpose, or threatened or attacked with a knife, gun or other weapon (d107) |
+| Both physical and sexual violence | Physical violence only | Experienced both kinds (by anyone) |
+| Formerly in union | Currently married or living with a partner | Divorced, separated or widowed |
+| Partner drinks alcohol | Partner does not drink | d113 |
+| ≥3 controlling behaviours | 0–2 behaviours | Jealous, accuses of unfaithfulness, limits contact with friends or family, insists on knowing whereabouts… (d101a–f) |
+| Non-partner perpetrator only | Partner only | Who committed the violence |
+| Education | No education | Primary; secondary or higher |
+| Wealth | — | Per step up the 5 household-wealth quintiles |
+| Urban | Rural | |
+| Working | Not working | |
+| Age | — | **Per year of age** (15–24); centred at 20 |
+
+The partner items (injury, severity, alcohol, control) are only asked about partners, so they are estimated among young women with partner violence.
+
+# How many young survivors seek help? (with 95% CIs)
+
+**What we do.** Estimate the percentage who told anyone, sought any help, and sought formal help, for each region. The 95% CI accounts for the survey design: weights and clustering of women in the same village.
+
+**Why.** Every percentage is an estimate from a sample, so readers need to see how precise it is.
+
+```{r cascade-live}
+design <- svydesign(ids = ~cluster, weights = ~weight, data = young, nest = TRUE)
+
+region_ci <- function(outcome) {
+  svyby(as.formula(paste0("~", outcome)), ~region, design, svyciprop, method = "logit", vartype = "ci", na.rm = TRUE) |>
+    as.data.frame() |>
+    setNames(c("region", "pct", "lo", "hi")) |>
+    mutate(outcome = outcome, across(c(pct, lo, hi), ~ 100 * .x))
+}
+cascade <- bind_rows(region_ci("told"), region_ci("sought_any"), region_ci("formal"))
+
+cascade |>
+  mutate(`% (95% CI)` = show_ci(pct, lo, hi)) |>
+  select(region, outcome, `% (95% CI)`) |>
+  tidyr::pivot_wider(names_from = outcome, values_from = `% (95% CI)`) |>
+  kable(caption = "Young women aged 15–24 who experienced violence: told anyone, sought any help, sought formal help (%, 95% CI)") |>
+  kable_styling(full_width = FALSE)
+```
+
+**What the ranges mean.** "The range across countries" is the lowest to the highest country, and both are named:
+
+```{r ranges}
+readr::read_csv(file.path(results, "A8_5_dhs_cascade_ci.csv"), show_col_types = FALSE) |>
+  filter(level == "country") |>
+  group_by(outcome) |>
+  summarise(lowest  = sprintf("%s: %s", country[which.min(pct)], show_ci(min(pct), lo[which.min(pct)], hi[which.min(pct)])),
+            highest = sprintf("%s: %s", country[which.max(pct)], show_ci(max(pct), lo[which.max(pct)], hi[which.max(pct)]))) |>
+  kable(caption = "Lowest and highest country (% with 95% CI)") |> kable_styling(full_width = FALSE)
+```
+
+```{r fig-cascade, echo = FALSE, fig.cap = "Figure 2. The help-seeking cascade with 95% CIs: (a) DHS by region; (b) VACS by violence type and sex."}
+knitr::include_graphics(file.path(figures, "fig2_cascade_ci.png"))
+```
+
+```{r fig-map, echo = FALSE, fig.cap = "Figure 1. Where young survivors seek help: map, regions, and every country's percentage with its 95% CI."}
+knitr::include_graphics(file.path(figures, "fig1_map_help_seeking.png"))
+```
+
+# What predicts seeking help? Step 1: one model per country
+
+**What we do.** In each country we fit one **weighted logistic regression** with all predictors together. Each odds ratio is therefore adjusted for the others. Standard errors allow for clustering within villages, and countries with several survey rounds get a separate baseline for each round.
+
+**Why one model per country?** Countries differ in their surveys, services and populations. Fitting each country separately and then combining the results (next step) lets us see whether the associations agree.
+
+```{r country-function}
+covariates <- "agegrp + educ + wealthq + urban + marital + working + kids3 + media + decisions2 + justify + vtype + perp + recent + private"
+partner_items <- "+ severe + injury + inj_na + alcohol + controlling3"
+
+prepare <- function(d) d |> mutate(
+  agegrp  = v012 - 20,                                                           # age in years, centred at 20
+  educ    = factor(case_when(v106 == 0 ~ "none", v106 == 1 ~ "primary", TRUE ~ "secondary+"), levels = c("none", "primary", "secondary+")),
+  wealthq = v190, urban = as.integer(v025 == 1),
+  marital = factor(case_when(v501 %in% 1:2 ~ "current", v501 == 0 ~ "never", TRUE ~ "former"), levels = c("current", "former", "never")),
+  kids3   = as.integer(children >= 3),
+  decisions2 = if_else(v501 %in% 1:2 & !is.na(decisions2), decisions2, 0),
+  vtype   = factor(vtype, levels = c("physical", "sexual", "both")),
+  perp    = factor(perp, levels = c("partner", "nonpartner", "both")),
+  recent  = as.integer(victim_12m),
+  inj_na  = as.integer(is.na(injury)), injury = coalesce(injury, 0))
+
+fit_country <- function(d, outcome, rhs) {
+  feglm(as.formula(paste(outcome, "~", rhs, "| survey")), data = d, family = binomial("logit"),
+        weights = ~weight, cluster = ~cluster, notes = FALSE, warn = FALSE)
+}
+```
+
+**Live example: Kenya** (three survey rounds), seeking any help, young women with partner violence:
+
+```{r kenya}
+kenya <- young |> filter(country == "KE", perp %in% c("partner", "both")) |> prepare()
+m <- fit_country(kenya, "sought_any", paste(covariates, partner_items))
+
+ci <- confint(m)
+tibble(term = names(coef(m)), OR = exp(coef(m)), lo = exp(ci[, 1]), hi = exp(ci[, 2])) |>
+  filter(term %in% c("injury", "severe", "alcohol", "controlling3", "maritalformer", "agegrp", "wealthq", "urban")) |>
+  mutate(`OR (95% CI)` = show_ci(OR, lo, hi, 2)) |>
+  select(term, `OR (95% CI)`) |>
+  kable(caption = "Kenya: odds ratios for seeking any help (young women with partner violence)") |> kable_styling(full_width = FALSE)
+```
+
+The same function runs for every country, outcome and predictor in `50_disclosure_predictors.R`, giving `r nrow(readr::read_csv(file.path(results, "A2_country_estimates.csv"), show_col_types = FALSE))` country-level estimates.
+
+# What predicts seeking help? Step 2: combine countries (Bayesian pooling)
+
+**What we do.** Combine the country estimates in a **three-level model**: countries within regions, and regions within Africa.
+
+**Why.**
+
+- Single countries can be imprecise, especially for rare outcomes.
+- The model shares information: a country estimate is pulled towards its regional average, and regional averages towards the continental average, but **only as much as the data justify**.
+- It gives an estimate *and a credible interval* for Africa as a whole **and for each region**.
+
+The model, written in NumPyro (Python), looks like this:
+
+```python
+mu    ~ Normal(0, 1)          # pooled log-odds ratio for Africa
+omega ~ HalfNormal(0.5)       # how much regions differ from each other
+tau   ~ HalfNormal(0.5)       # how much countries differ within a region
+mu_region  = mu + omega * u_region            # u ~ Normal(0, 1)
+theta_c    = mu_region[c] + tau * z_c         # z ~ Normal(0, 1)
+estimate_c ~ Normal(theta_c, se_c)            # what each country model reported
+```
+
+**Note:** the Southern African countries (Lesotho, Namibia, South Africa) have too few young women for a country model (fewer than 300 women or 30 events), so the pooled models cover West, Central and East Africa. Southern Africa is still included in every percentage.
+
+It is fitted with the NUTS sampler: 4 independent chains × 2,000 draws. Before trusting any result we check three things:
+
+- **R-hat** < 1.01: the chains agree.
+- **Effective sample size** > 400: there are enough independent draws.
+- **Divergences**, which flag sampling problems.
+
+```{r pooled}
+pooled <- readr::read_csv(file.path(results, "A3_pooled_numpyro.csv"), show_col_types = FALSE)
+
+labels <- c(injury = "Injury (vs none)", severe = "Severe violence (vs less/none)", vtypeboth = "Physical + sexual (vs physical only)",
+            maritalformer = "Formerly in union (vs current)", alcohol = "Partner drinks (vs not)", working = "Working (vs not)",
+            wealthq = "Wealth (per quintile)", `educsecondary+` = "Secondary+ education (vs none)", urban = "Urban (vs rural)",
+            agegrp = "Age (per year)")
+pick <- tribble(~model, ~term,
+                "partner", "injury", "partner", "severe", "main", "vtypeboth", "main", "maritalformer", "partner", "alcohol",
+                "main", "working", "main", "wealthq", "main", "educsecondary+", "main", "urban", "main", "agegrp")
+
+pooled |>
+  filter(source == "DHS", outcome == "sought_any") |>
+  inner_join(pick, by = c("model", "term")) |>
+  transmute(Predictor = labels[term],
+            `Africa: OR (95% CrI)` = show_ci(OR, OR_lo, OR_hi, 2),
+            West = show_ci(OR_West, OR_West_lo, OR_West_hi, 2), Central = show_ci(OR_Central, OR_Central_lo, OR_Central_hi, 2),
+            East = show_ci(OR_East, OR_East_lo, OR_East_hi, 2),
+            Countries = countries, `R-hat` = round(rhat_max, 3), ESS = round(ess_min), Divergences = divergences) |>
+  kable(caption = "Seeking any help: pooled and regional odds ratios with 95% credible intervals, and sampler diagnostics") |>
+  kable_styling(font_size = 11)
+```
+
+```{r fig-predictors, echo = FALSE, fig.cap = "Figure 3. Predictors with pooled (black) and regional (coloured) 95% credible intervals."}
+knitr::include_graphics(file.path(figures, "fig3_predictors_regional_cri.png"))
+```
+
+**How much does each country count?**
+
+- **Within a region**, each country's weight is $1/(se_c^2 + \tau^2)$, so precise countries count more. Adding $\tau^2$ to every variance stops any single country from dominating.
+- **Across regions**, the weights are combined in the same way, using $\omega$.
+
+```{r fig-weights, echo = FALSE, fig.cap = "Supplementary Figure 1. Each country's weight (%) in the pooled estimate."}
+knitr::include_graphics(file.path(figures, "figS1_country_weights.png"))
+```
+
+# Do predictors agree across regions?
+
+**Plain-language rules:**
+
+* **Universal**: in more than 90% of the posterior draws, every regional average points the same way as the African average, **and** the regions are not statistically different from each other.
+* **Region-specific**: the regional averages differ more than chance would explain. The test is corrected for testing many predictors (Holm correction).
+* **Uncertain**: neither of the above, usually because the data are too thin to say.
+
+```{r agreement}
+pooled |>
+  filter(source == "DHS") |>
+  count(outcome, class) |>
+  tidyr::pivot_wider(names_from = class, values_from = n, values_fill = 0) |>
+  kable(caption = "How many predictors are universal, region-specific or uncertain") |> kable_styling(full_width = FALSE)
+```
+
+**Replication.** We repeat the pooling separately in two randomly chosen halves of the countries (a "discovery" set and a "held-out" set). A result that appears in both halves is unlikely to be a fluke.
+
+```{r replication}
+readr::read_csv(file.path(results, "A3_replication_numpyro.csv"), show_col_types = FALSE) |>
+  filter(source == "DHS", outcome == "sought_any", term %in% c("injury", "severe", "vtypeboth", "maritalformer")) |>
+  filter((model == "partner" & term %in% c("injury", "severe")) | (model == "main" & term %in% c("vtypeboth", "maritalformer"))) |>
+  transmute(Predictor = labels[term], `Discovery countries` = show_ci(OR_d, OR_lo_d, OR_hi_d, 2), `Held-out countries` = show_ci(OR_h, OR_lo_h, OR_hi_h, 2),
+            `Credible in both` = both_credible) |>
+  kable(caption = "Replication in two independent sets of countries (seeking any help)") |> kable_styling(full_width = FALSE)
+```
+
+# Is help-seeking changing over time?
+
+**What we do.** In the 19 countries with two or more DHS rounds, we estimate the change **per decade**, adjusted for who the survivors are, and pool the countries.
+
+**Is it just because there is less (or milder) violence?** We check this in two ways:
+
+- **(a)** the trend in past-year victimisation itself;
+- **(b)** the help-seeking trend after also adjusting for severity and injury.
+
+```{r trends}
+trend <- readr::read_csv(file.path(results, "A5_trends_numpyro.csv"), show_col_types = FALSE) |> filter(model == "adjusted")
+check <- readr::read_csv(file.path(results, "A8_2_trends_numpyro.csv"), show_col_types = FALSE)
+
+bind_rows(
+  trend |> transmute(What = paste("Help-seeking trend:", outcome), countries, OR, OR_lo, OR_hi),
+  check |> transmute(What = model, countries, OR, OR_lo, OR_hi)) |>
+  mutate(`OR per decade (95% CrI)` = show_ci(OR, OR_lo, OR_hi, 2)) |>
+  select(What, countries, `OR per decade (95% CrI)`) |>
+  kable(caption = "Trends per decade (OR < 1 = falling)") |> kable_styling(full_width = FALSE)
+```
+
+```{r fig-trends, echo = FALSE, fig.cap = "Figure 4. Seeking any help by survey round, country trends (95% CI) and pooled trends (95% CrI)."}
+knitr::include_graphics(file.path(figures, "fig4_trends_any_help.png"))
+```
+
+# Does harsh climate change violence, or suppress its reporting?
+
+## Why the first climate analysis was redesigned
+
+<div class="warn">
+The DHS asks **"Have you *ever* sought help?"** about violence a woman has *ever* experienced. Our first climate analysis linked this lifetime answer to the weather **in the year before the interview**. For many women the help-seeking concerned violence from years earlier, so the timing did not match. A placebo test exposed the problem: weather in the year *after* the interview "predicted" help-seeking almost as well as weather before it, which is impossible if the weather were the cause.
+</div>
+
+**The fix: follow women whose violence is new.**
+
+- We keep women who had **no violence before the past 12 months**.
+- For them, any violence and any help-seeking happened in the **same 12 months** as the climate exposure.
+
+Then we follow the **reporting chain**:
+
+| Step | Who | Question |
+|---|---|---|
+| 1. New violence | All women without prior violence | Did violence start in the past year? |
+| 2. Formal help | New victims | Did they go to police, health, legal or social services? |
+| 3. Reached services | All women without prior violence | Is there new violence that services could see? (= step 1 × step 2) |
+
+If harsh climate **suppresses reporting**, step 2 falls. If it **increases violence**, step 1 rises.
+
+## Measuring heat properly: the Excess Heat Factor
+
+Heat stress depends on how unusual the heat is **and** whether the body has had time to adjust. The Excess Heat Factor (EHF; Nairn & Fawcett 2015) captures both:
+
+$$\text{EHF}_i = \underbrace{(T3_i - T_{95})}_{\text{unusually hot for this place?}} \times \max\Big(1, \underbrace{T3_i - \overline{T}_{i-30\ldots i-1}}_{\text{hotter than the last 30 days?}}\Big)$$
+
+where $T3_i$ is the 3-day mean temperature starting on day $i$, and $T_{95}$ is the place's 95th percentile (1991–2020).
+
+- A **heatwave day** has EHF > 0.
+- A **severe** heatwave day has EHF at or above the place's 85th percentile of positive EHF values.
+
+**Live example:** one village in Kenya (cluster 1, DHS 2022), using daily AgERA5 mean temperature.
+
+```{r ehf-demo, fig.height = 3.2, fig.cap = "EHF for one Kenyan cluster in 2021 (bars above zero = heatwave days; dashed line = severe threshold EHF85)."}
+temp <- readr::read_csv(path.expand("~/Documents/OMS Climate Exposure Pipeline/outputs/KE_2022_8C_agera5.csv.gz"), show_col_types = FALSE) |>
+  filter(unit_id == 1) |>
+  arrange(date)
+
+t95 <- quantile(temp$tmean[lubridate::year(temp$date) %in% 1991:2020], 0.95, na.rm = TRUE)   # local 95th percentile
+
+ehf_days <- temp |>
+  mutate(T3       = (tmean + lead(tmean, 1) + lead(tmean, 2)) / 3,                # next 3 days
+         T30      = zoo::rollmeanr(lag(tmean), 30, fill = NA),                   # previous 30 days
+         EHI_sig  = T3 - t95,
+         EHI_accl = T3 - T30,
+         EHF      = EHI_sig * pmax(1, EHI_accl))
+
+ehf85 <- quantile(ehf_days$EHF[ehf_days$EHF > 0 & lubridate::year(ehf_days$date) %in% 1991:2020], 0.85, na.rm = TRUE)
+
+ehf_days |>
+  filter(lubridate::year(date) == 2021) |>
+  ggplot(aes(date, pmax(EHF, -2))) +
+  geom_col(aes(fill = EHF > 0), width = 1) +
+  geom_hline(yintercept = ehf85, linetype = "dashed") +
+  scale_fill_manual(values = c(`TRUE` = "#D55E00", `FALSE` = "grey80"), labels = c("No heatwave", "Heatwave day"), name = NULL) +
+  labs(x = NULL, y = "Excess Heat Factor (K², truncated at −2)") +
+  theme_minimal(base_size = 9)
+
+c(T95_celsius = unname(round(t95, 1)), EHF85 = unname(round(ehf85, 1)),
+  heatwave_days_2021 = sum(ehf_days$EHF > 0 & lubridate::year(ehf_days$date) == 2021, na.rm = TRUE))
+```
+
+## Measuring prolonged drought
+
+The **SPEI** (standardised precipitation–evapotranspiration index) measures water balance compared with normal. A value ≤ −1 means moderately dry or worse.
+
+| Measure | Definition |
+|---|---|
+| Prolonged drought | Months with **12-month SPEI ≤ −1** in the 24 months before interview |
+| Recent and long drought | **12 or more consecutive** such months (as in recent VACS work) |
+| Drought intensity | Sum of how far below −1 the 12-month SPEI went, over 48 months |
+| Short drought | Months with **3-month SPEI ≤ −1** in the past year |
+
+Each drought measure is calculated from **two independent data products** (ERA5 and SPEIbase). At village level, the two products agree poorly (correlation 0.06), so a drought finding counts only if it holds in both.
+
+## The comparison and the placebo
+
+- **Comparison:** the same 0.5° grid cells across survey rounds. Places are compared with themselves in wetter or drier, hotter or cooler years.
+- **Placebo:** the same exposure in the 12 months **after** the interview. It cannot cause earlier violence, so its effect should be about 1.
+
+## Results
+
+```{r chain-results}
+p35 <- readr::read_csv(file.path(tables, "P35/P35_results.csv"), show_col_types = FALSE)
+p34 <- readr::read_csv(file.path(tables, "P34/P34_results.csv"), show_col_types = FALSE)
+step <- c(O1 = "1. New violence", O2 = "2. Formal help (given new violence)", O3 = "3. Reached formal services")
+
+bind_rows(
+  p35 |> filter(analysis == "primary", term %in% c("hw_12_z", "dm24_e5_z")) |>
+    mutate(Exposure = if_else(term == "hw_12_z", "Heatwave days (EHF), per +8.5 days", "Prolonged drought (ERA5), per +3.4 months")),
+  p35 |> filter(analysis == "SPEIbase replication", term == "dm24_sb_z") |> mutate(Exposure = "Prolonged drought (SPEIbase), per +2.4 months"),
+  p34 |> filter(analysis == "primary (Poisson RR)", term == "drought_z", outcome %in% c("O1", "O2", "O3")) |> mutate(Exposure = "Short drought (ERA5), per +1.4 months"),
+  p35 |> filter(analysis == "P34 product check: SPEIbase SPEI-03", term == "dm3_sb_z") |> mutate(Exposure = "Short drought (SPEIbase), per +0.8 months")) |>
+  mutate(`RR (95% CI)` = show_ci(RR, lo, hi, 3), step = step[outcome]) |>
+  select(Exposure, step, `RR (95% CI)`) |>
+  tidyr::pivot_wider(names_from = step, values_from = `RR (95% CI)`, values_fill = "not tested") |>
+  kable(caption = "Climate and the reporting chain: relative risks per typical within-place increase (RR = 1: no effect)") |>
+  kable_styling(font_size = 11)
+```
+
+**Does harsh climate suppress reporting?** We registered ten tests in advance, each predicting a *fall* in formal help-seeking, or a shift to informal help, where suppression is most likely:
+
+```{r suppression}
+readr::read_csv(file.path(tables, "P35/P35_suppression_tests.csv"), show_col_types = FALSE) |>
+  transmute(Test = c("Severe heatwave days", "Recent-and-long drought", "Heat × distance to facility a big problem",
+                     "Drought × distance a big problem", "Heat → informal help only", "Drought → informal help only",
+                     "Heatwave days in last 3 months", "Drought months in last 3 months", "Heat × rural", "Drought × rural"),
+            Predicted = pred, `RR (95% CI)` = show_ci(RR, lo, hi, 3), `Holm p` = round(p_holm_D, 2), Supported = supported) |>
+  kable(caption = "Pre-specified suppression tests (formal help-seeking given new violence unless stated)") |> kable_styling(font_size = 11)
+```
+
+```{r fig-chain, echo = FALSE, fig.cap = "Figure 5. The reporting chain overall (black) and by UN region."}
+knitr::include_graphics(file.path(figures, "fig6b_reporting_chain_by_region.png"))
+```
+
+<div class="box">
+**What we conclude.**
+
+- **Heatwaves and prolonged drought** did not change the start of violence or whether new victims sought formal help. The intervals rule out falls in formal help-seeking larger than about 8% (heat) or 5% (drought) per typical increase.
+- **Short drought** was linked to slightly more new violence (about +2%, mainly East Africa) in one drought product, but **not in the other**, so we do not treat it as robust.
+- **No evidence of suppression across Africa** (0 of 10 tests).
+- **Central Africa** is a possible exception: more heatwave days, less formal help-seeking (RR about 0.80). The placebo was clean and all leave-one-country-out estimates were below 1, but it did not survive conservative clustering (p = 0.07). It should be tested with service records.
+</div>
+
+# What we could not do (yet)
+
+* **Who perpetrates violence against boys.** The public VACS files do not include labels for the perpetrator questions. The CDC codebooks are needed.
+* **Testing social policies directly.** An example is Nigeria's Violence Against Persons (Prohibition) Act, adopted by different states in different years. This would be a separate, pre-registered difference-in-differences study.
+* **Machine-learning selection of predictors.** For example, LASSO or random forests run within each region. This could complement the pre-specified predictors as a secondary analysis.
+
+# Reproducibility
+
+```{r session}
+sessionInfo()
+```

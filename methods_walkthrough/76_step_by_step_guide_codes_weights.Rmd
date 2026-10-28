@@ -1,0 +1,435 @@
+---
+title: "Step-by-step guide: survey codes, weights and how to repeat the disclosure analysis"
+author: "Samuel Tekle"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_download: true
+    number_sections: true
+    theme: flatly
+    fig_caption: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center", fig.width = 8)
+```
+
+# How to use this guide
+
+This guide goes from the **raw survey files** to the **analysis variables**, one step at a time, using one survey you can open yourself: the **Kenya DHS 2022** women's file. It explains:
+
+1. what each DHS and VACS variable code means, read directly from the files' own labels;
+2. the **different weights** (`v005`, `d005`, the VACS weights, and the precision weights in the Bayesian model), what each one does and why we use it;
+3. the survey **design** (clusters and strata) and how it enters the confidence intervals;
+4. how to rebuild our variables by hand and check them against the analysis files.
+
+The full analysis (cascade, country models and the brms pooling) is in the companion document `75_disclosure_walkthrough_brms.Rmd`. Read this guide first.
+
+# Step 1 - Packages
+
+```{r packages}
+library(pacman)
+
+pacman::p_load(
+  # project and file management
+  here,       # paths relative to the project folder
+  haven,      # read Stata .dta files with their value labels
+  rio,        # import csv / csv.gz
+  # data management and tables
+  tidyverse,
+  knitr,
+  kableExtra,
+  # survey design and models
+  survey,     # svydesign(), svymean(), svyciprop()
+  fixest      # feglm(): weighted logistic regression with clustered SEs
+)
+
+here::i_am("analysis/76_step_by_step_guide_codes_weights.Rmd")
+```
+
+# Step 2 - What a DHS file is
+
+The DHS Program releases several recode files per survey. We use the **Individual Recode (IR)**: one row per woman aged 15-49 interviewed. The file name tells you what it is:
+
+| Part of `KEIR8CDT.zip` | Meaning |
+|---|---|
+| `KE` | Country (Kenya) |
+| `IR` | Individual (women's) Recode |
+| `8` | DHS phase 8 (questionnaire version) |
+| `C` | Release letter within the phase |
+| `DT` | Stata format (`.dta`) |
+
+Files are downloaded from <https://dhsprogram.com> after registering a project. Our files are in `data/raw/dhs_ir/` (217 IR files).
+
+## Opening the file and reading the labels
+
+Every DHS variable carries a **label** (what the question is) and **value labels** (what each code means). `haven::read_dta()` keeps both, so you never need to guess a code.
+
+```{r open-dhs}
+zip_file <- here("data", "raw", "dhs_ir", "KEIR8CDT.zip")
+dta_file <- unzip(zip_file, exdir = tempdir())
+dta_file <- dta_file[grepl("\\.dta$", dta_file, ignore.case = TRUE)]
+
+# the variables used in the paper
+dhs_vars <- c("caseid", "v001", "v005", "v008", "v012", "v021", "v022", "v024", "v025", "v044", "v106", "v151",
+              "v157", "v158", "v159", "v190", "v218", "v501", "v714", "v743a", "v743b", "v743d",
+              "v744a", "v744b", "v744c", "v744d", "v744e", "d005", "d101a", "d101b", "d101c", "d101d", "d101e", "d101f",
+              paste0("d105", letters[1:11]), "d107", "d110a", "d110b", "d110d", "d113", "d115y", "d117a",
+              "d119y", "d122a", "d122b", "d122c", "d124", "d125", "d128")
+
+ke <- read_dta(dta_file, col_select = any_of(c(dhs_vars, sprintf("d119%s", letters))))
+dim(ke)   # women x variables
+
+# a helper that prints a variable's question and its codes
+look_up <- function(data, var) {
+  codes <- attr(data[[var]], "labels")
+  tibble(variable = var,
+         question = attr(data[[var]], "label"),
+         codes    = if (length(codes)) paste(paste0(codes, " = ", names(codes)), collapse = "; ") else "(numeric)")
+}
+
+look_up(ke, "d119y")
+look_up(ke, "v044")
+```
+
+# Step 3 - The code dictionary
+
+The table below is produced from the Kenya 2022 file's own labels. The last column says how the paper uses each code. Wording differs slightly between survey phases, so for any other survey run `look_up()` on that file.
+
+```{r dictionary}
+use <- c(
+  caseid = "Identifies the woman (used to link files)",
+  v001 = "Cluster: used as the primary sampling unit (PSU) for clustering",
+  v005 = "Women's weight (not used for violence; see Step 4)",
+  v008 = "Interview date in century-month code (CMC): year = 1900 + (v008 - 1) %/% 12",
+  v012 = "Age in years; we keep 15-24",
+  v021 = "PSU (equals v001 in most surveys)",
+  v022 = "Sampling stratum (see Step 5)",
+  v024 = "Region of the country",
+  v025 = "Urban (1) or rural (2)",
+  v044 = "Selected for the domestic violence module: keep 1 only",
+  v106 = "Education: none / primary / secondary or higher",
+  v151 = "Sex of household head: female head = 2 (harmonised analysis)",
+  v157 = "Media: weekly or daily newspaper, radio (v158) or TV (v159) = media exposure",
+  v190 = "Wealth quintile 1-5, entered as a number",
+  v218 = "Living children: 3 or more = 1",
+  v501 = "Marital status: current (1-2), never (0), former (3-5)",
+  v714 = "Currently working (1 = yes)",
+  v743a = "Decisions (health v743a, purchases v743b, visits v743d): alone or jointly in at least two = 1",
+  v744a = "Wife-beating justified for any of five reasons (v744a-e) = 1",
+  d005 = "Domestic violence weight: the weight for every violence analysis",
+  d101a = "Controlling behaviours (d101a-f): three or more = 1",
+  d105a = "Partner violence items d105a-k: codes 1-4 = ever, 1-2 = in the last 12 months",
+  d107 = "Severe violence: summary of d105d-f (kicked or dragged, strangled or burnt, threatened with a weapon)",
+  d110a = "Injury: bruises (d110a), eye injuries, sprains, dislocations or burns (d110b), wounds or broken bones (d110d)",
+  d113 = "Partner drinks alcohol",
+  d115y = "Non-partner physical violence: 0 = someone other than a partner hurt her",
+  d117a = "Non-partner physical violence in the last 12 months",
+  d119y = "OUTCOME: 0 = sought help from someone, 1 = sought no help",
+  d122a = "Interview interrupted by husband (d122a), another man (d122b) or a woman (d122c): any = not private",
+  d124 = "Forced sex by a non-partner in the last 12 months",
+  d125 = "Ever forced to perform unwanted sexual acts (see the note in Step 7)",
+  d128 = "OUTCOME: told anyone else about the violence"
+)
+
+map_dfr(intersect(names(use), names(ke)), ~ look_up(ke, .x)) %>%
+  mutate(how_we_use_it = use[variable]) %>%
+  kable() %>%
+  kable_styling(font_size = 11) %>%
+  scroll_box(height = "500px")
+```
+
+The help-seeking **sources** are the variables `d119a`, `d119b`, ... and, in newer surveys, extra codes such as `d119xa`, `d119xb`, ... Each is one possible person or service, coded 1 if she went to them. Formal sources are those whose label names the police, a doctor or health worker, a lawyer or court, social services, an NGO or a helpline. Religious and traditional leaders are classed as informal.
+
+```{r sources}
+sources <- setdiff(names(ke)[grepl("^d119[a-z]+$", names(ke))], "d119y")   # d119a ... d119xk, but not d119y (the "no one" switch)
+formal_pattern <- "police|gendarm|doctor|medical|health|lawyer|legal|social serv|social work|court|judge|\\bngo\\b|helpline|hotline"
+informal_pattern <- "traditional|religious|healer"
+
+map_dfr(sources, ~ look_up(ke, .x)) %>%
+  filter(!str_starts(question, "na -")) %>%           # "na -" means the item was not asked in this survey
+  mutate(formal = str_detect(question, regex(formal_pattern, ignore_case = TRUE)) &
+                  !str_detect(question, regex(informal_pattern, ignore_case = TRUE))) %>%
+  mutate(women_who_said_yes = map_int(variable, ~ sum(ke[[.x]] == 1, na.rm = TRUE))) %>%
+  select(variable, question, women_who_said_yes, formal) %>%
+  kable() %>% kable_styling(font_size = 11)
+```
+
+# Step 4 - The DHS weights
+
+## Two weights in every DHS women's file
+
+| Weight | What it corrects for | When to use it |
+|---|---|---|
+| `v005` | Unequal chances of each **household** being sampled, and non-response | Anything asked of **all** women |
+| `d005` | The same, **plus** the fact that only **one woman per household** was selected for the domestic violence module, and non-response to the module | Anything from the **domestic violence module**: violence, help-seeking, telling anyone |
+
+The violence module is asked of one randomly chosen woman per household, for her safety. A woman in a household with three eligible women had a one-in-three chance of being asked, so she must count three times as much as a woman who lived alone. `d005` builds this in; `v005` does not. **All our analyses use `d005`.**
+
+Both weights are stored with six implied decimals, so we divide by 1,000,000:
+
+```{r weights-scale}
+ke <- ke %>% mutate(v005_w = v005 / 1e6, d005_w = d005 / 1e6)
+
+dv <- ke %>% filter(v044 == 1, d005 > 0)     # women selected for and interviewed in the module
+
+tibble(
+  women_in_file              = nrow(ke),
+  sum_of_v005_weights        = sum(ke$v005_w),
+  women_in_violence_module   = nrow(dv),
+  sum_of_d005_weights        = sum(dv$d005_w)
+) %>% kable(digits = 0) %>% kable_styling(full_width = FALSE)
+```
+
+**DHS weights are normalised.** Within each survey they add up to the number of women interviewed, not to the population. They fix the **proportions within a survey**, but they do not say how many women each country has. This matters when surveys are combined (Step 4.3).
+
+## Weights change the answer
+
+Here is the share of young women (15-24) with violence who sought help in Kenya 2022, without and with the weight:
+
+```{r weighted-vs-unweighted}
+young_victims <- dv %>%
+  mutate(any_partner = if_any(starts_with("d105"), ~ .x %in% 1:4),
+         victim = any_partner | d115y %in% 0 | d124 %in% 1 | d125 %in% 1) %>%
+  filter(v012 <= 24, victim, !is.na(d119y)) %>%
+  mutate(sought_any = as.numeric(d119y == 0))
+
+tibble(women = nrow(young_victims),
+       unweighted_percent = 100 * mean(young_victims$sought_any),
+       weighted_percent   = 100 * weighted.mean(young_victims$sought_any, young_victims$d005_w)) %>%
+  kable(digits = 1) %>% kable_styling(full_width = FALSE)
+```
+
+## Combining surveys and countries
+
+Because DHS weights add up to each survey's sample size, pooling women from several surveys with `d005 / 1e6` gives each survey influence **in proportion to how many women it interviewed**, not to how many women live in the country. That is what our "all countries" percentages do (for example 32.9% sought any help).
+
+Two alternatives, and when to use them:
+
+* **Equal weight per country:** average the country percentages. Useful when each country is a unit of comparison.
+* **Population weight (de-normalising):** multiply each survey's weights by (number of women aged 15-24 in the country) / (sum of that survey's weights). This gives a population-representative regional figure, and needs UN population estimates.
+
+```{r pooling-weights}
+dhs <- bind_rows(import(here("data", "derived", "women_disclosure.csv.gz")),
+                 import(here("data", "derived", "women_disclosure_heldout.csv.gz"))) %>%
+  filter(!is.na(sought_any), vtype != "none", survey != "SN_2019_8B", v012 <= 24) %>%
+  mutate(w = d005 / 1e6)
+
+country_pct <- dhs %>% group_by(country) %>% summarise(pct = 100 * weighted.mean(sought_any, w), women = n())
+
+tibble(
+  `pooled women, sample-size weighting (paper)` = 100 * weighted.mean(dhs$sought_any, dhs$w),
+  `average of country percentages (equal weight)` = mean(country_pct$pct)
+) %>% kable(digits = 1) %>% kable_styling(full_width = FALSE)
+```
+
+The two are close here. The country estimates and the regression models do not depend on this choice, because each is computed within one country.
+
+## Weights in regression models
+
+In a weighted logistic regression the weights enter the likelihood (equation 3 in the paper). Multiplying all weights by a constant does not change the odds ratios or their cluster-robust standard errors, so it does not matter whether we divide by 1,000,000:
+
+```{r weight-scale-invariance}
+ke_young <- young_victims %>% mutate(clus = v001, urban = as.integer(v025 == 1), age = v012 - 20)
+
+m1 <- feglm(sought_any ~ age + urban, data = ke_young, family = binomial("logit"), weights = ~d005_w, cluster = ~clus)
+m2 <- feglm(sought_any ~ age + urban, data = ke_young, family = binomial("logit"), weights = ~I(d005_w * 1000), cluster = ~clus)
+
+tibble(term = names(coef(m1)), OR_weights_as_is = exp(coef(m1)), OR_weights_x1000 = exp(coef(m2)),
+       SE_as_is = se(m1), SE_x1000 = se(m2)) %>%
+  kable(digits = 4) %>% kable_styling(full_width = FALSE)
+```
+
+# Step 5 - The survey design: clusters and strata
+
+DHS samples **clusters** (villages or city blocks, `v001`/`v021`) within **strata** (region by urban/rural, `v022`). Women in the same cluster are more alike than women chosen at random, so treating them as independent would make intervals too narrow.
+
+* **Clusters** must always be declared: we use `v001` (as `survey-v001`, so clusters are unique across surveys).
+* **Strata** make standard errors slightly smaller. We did **not** declare strata, which gives slightly wider, conservative intervals. The comparison below shows how small the difference is.
+
+When strata are declared on a small subset (here, young women with violence in one survey), some strata contain only one cluster ("lonely PSU"), and the variance cannot be computed within them. The standard fix is to centre those strata on the overall mean:
+
+```{r design}
+options(survey.lonely.psu = "adjust")
+
+ke_design_clusters <- svydesign(ids = ~v021, weights = ~d005_w, data = ke_young, nest = TRUE)
+ke_design_strata   <- svydesign(ids = ~v021, strata = ~v022, weights = ~d005_w, data = ke_young, nest = TRUE)
+ke_design_none     <- svydesign(ids = ~1, weights = ~d005_w, data = ke_young)
+
+map_dfr(list(`weights only (wrong: ignores clustering)` = ke_design_none,
+             `clusters (paper)` = ke_design_clusters,
+             `clusters + strata` = ke_design_strata),
+        ~ { ci <- svyciprop(~sought_any, .x, method = "logit")
+            tibble(percent = 100 * as.numeric(ci), lower = 100 * confint(ci)[1], upper = 100 * confint(ci)[2]) },
+        .id = "design") %>%
+  kable(digits = 2, caption = "Kenya 2022, young women with violence: sought any help") %>%
+  kable_styling(full_width = FALSE)
+```
+
+In Kenya 2022 the three intervals are almost the same. There are fewer young survivors (about 1,400) than clusters (about 1,700), so few clusters contain more than one of them and clustering hardly matters. In surveys with fewer, larger clusters, or for outcomes asked of everyone, ignoring clustering gives intervals that are clearly too narrow, so it is always declared.
+
+In the regression models the same idea is the `cluster = ~clus` argument of `feglm()`: standard errors allow for correlation within clusters (equation 4).
+
+# Step 6 - From codes to analysis variables (DHS)
+
+Now we rebuild the main variables for Kenya 2022 by hand, exactly as the build script `41_build_disclosure_women.py` does, and check the result against the analysis file.
+
+```{r rebuild}
+partner_physical <- paste0("d105", c("a", "b", "c", "d", "e", "f", "g", "j"))
+partner_sexual   <- paste0("d105", c("h", "i", "k"))
+
+ke_built <- dv %>%
+  mutate(
+    # violence (ever): partner items coded 1-4, or non-partner physical (d115y = 0), or forced sex (d124, d125)
+    partner_phys = if_any(any_of(partner_physical), ~ .x %in% 1:4),
+    partner_sex  = if_any(any_of(partner_sexual),   ~ .x %in% 1:4),
+    nonpartner_phys = d115y %in% 0,
+    nonpartner_sex  = d124 %in% 1 | d125 %in% 1,
+    victim_ever = partner_phys | partner_sex | nonpartner_phys | nonpartner_sex,
+    vtype = case_when((partner_phys | nonpartner_phys) & (partner_sex | nonpartner_sex) ~ "both",
+                      partner_phys | nonpartner_phys ~ "physical",
+                      partner_sex | nonpartner_sex ~ "sexual",
+                      TRUE ~ "none"),
+    # outcomes (asked only of women who reported violence: d119y is missing otherwise)
+    sought_any = if_else(is.na(d119y), NA_real_, as.numeric(d119y == 0)),
+    told       = if_else(is.na(d119y), NA_real_, as.numeric(d119y == 0 | d128 %in% 1)),
+    # predictors from the partner module
+    severe  = as.numeric(d107 == 1),
+    injury  = as.numeric(d110a %in% 1 | d110b %in% 1 | d110d %in% 1),
+    alcohol = as.numeric(d113 == 1)
+  )
+
+derived_ke <- import(here("data", "derived", "women_disclosure.csv.gz")) %>%
+  bind_rows(import(here("data", "derived", "women_disclosure_heldout.csv.gz"))) %>%
+  filter(survey == "KE_2022_8C")
+
+tibble(check = c("women in module", "ever experienced violence", "sought any help (count)", "told anyone (count)", "both types of violence"),
+       built_here = c(nrow(ke_built), sum(ke_built$victim_ever), sum(ke_built$sought_any, na.rm = TRUE),
+                      sum(ke_built$told, na.rm = TRUE), sum(ke_built$vtype == "both")),
+       analysis_file = c(nrow(derived_ke), sum(derived_ke$victim_ever), sum(derived_ke$sought_any, na.rm = TRUE),
+                         sum(derived_ke$told, na.rm = TRUE), sum(derived_ke$vtype == "both"))) %>%
+  mutate(match = built_here == analysis_file) %>%
+  kable() %>% kable_styling(full_width = FALSE)
+```
+
+## Rules worth remembering
+
+* **Codes 1-4 on `d105` mean "ever"**; codes 1-2 mean "in the last 12 months"; 0 means never. Older (phase 4) files code `d105` as 0/1 only, so the 12-month split is not available there.
+* **`d119y` is the outcome switch:** 0 = sought help from someone, 1 = no one, missing = not asked (no violence reported).
+* **Told anyone** = sought help **or** `d128` = 1. Where a survey did not ask `d128`, told is identical to sought help and is set to missing (the "Correction 2" rule).
+* Variables whose label starts with **"na -"** exist in the file but were not asked in that survey; they are all missing.
+
+# Step 7 - Notes from checking the codes across all 64 surveys
+
+Reading the labels of every survey (not only Kenya) gave three points to know when repeating the work:
+
+1. **Severe violence (`d107`)** is DHS's summary of `d105d-f`: kicked or dragged, strangled or burnt, threatened with a weapon. The coding is correct; the wording in the paper's draft omitted "kicked or dragged" and has been corrected.
+2. **Injury (`d110d`)** means wounds, broken bones or other serious injury in most surveys. In three older surveys in our sample (Cameroon 2004, Mali 2006, Rwanda 2005) `d110d` is a country-specific item; no young woman answered yes to it, so it has no effect on the results.
+3. **`d125`** asks about forced sexual acts **by anyone**, including partners. The build script treats it as non-partner violence, so up to 820 of the 6,241 women classed as having "both partner and non-partner" perpetrators may have had partner violence only. This affects only the perpetrator variable (an adjustment covariate), not injury, severe violence or both types of violence. A correction is proposed separately.
+4. **Formal sources.** A source counts as formal only if its label matches the pattern in Step 3. Some labels that may be formal do not match and are currently classed as informal. Most are single surveys: women's organisations and the Ministry of Family and Promotion of Women (Angola), community-based organisations and "women and social affairs" (Ethiopia 2024), safe spaces/rescue centres and "chief/other NGOs" (Kenya 2022), and local authorities, chiefs or community leaders (Madagascar, Malawi, Mozambique, Rwanda, Uganda). Whether these count as formal is a decision for the authors; it affects only the formal-help outcome.
+
+# Step 8 - The VACS codes and weights
+
+## Codes
+
+VACS public files contain indicators derived by the CDC, one set for **sexual violence** and one for **physical violence**. Each is coded **1 = yes, 2 = no, missing = not asked** (the young person did not report that type of violence). The variable names differ by country:
+
+| Country (year) | Weight | PSU | Sexual violence: told / knew where / sought / received | Physical violence: told / sought |
+|---|---|---|---|---|
+| Kenya (2019) | `SampleWeight` | `strata` (no PSU released) | `tell` `knewplace` `sought` `recvdserv` | `pvtell` `pvsought` |
+| Lesotho (2018) | `individual_weight1` | `psu` | `tellEver` `knewplaceEver` `soughtEver` `recvdservEver` | `PVTELLEver` `PVSOUGHTEver` |
+| Malawi (2013) | `Finalwgt` | `psu` | `tell` `knewplace` `sought` `recvdserv` | `pvtell` `pvsought` |
+| Mozambique (2019) | `sampleweight` | `Cluster` | `svtell` `svknewplace` `svsought` `svrecvdserv` | `pvtell` `pvsought` |
+| Namibia (2019) | `SampleWeight` | `strata` (no PSU released) | `tellEver` `knewplaceEver` `soughtEver` `recvdservEver` | `PVTELLEver` `PVSOUGHTEver` |
+| Eswatini (2022) | `sampleweight` | `psu` | `svtell` `svknewplace` `svsought` `svrecvdserv` | `pvtell` `pvsought` |
+| Tanzania (2023) | `SAMPLEWEIGHT` | `PSU` | `SVTELL` `SVKNEWPLACE` `SVSOUGHT` `SVRECVDSERV` | `PVTELL` `PVSOUGHT` |
+| Zimbabwe (2017) | `finalwt` | `psu` | `tell` `knewplace` `sought` `recvdserv` | `pvtell` (no lifetime sought) |
+
+The build script `20_build_vacs_disclosure.py` renames all of these to one set of names (`sv_tell`, `sv_sought`, `pv_tell`, ...) and recodes 1/2 to 1/0. A young person is counted as having experienced sexual violence when `sv_tell` is not missing.
+
+```{r vacs-raw}
+ke_vacs <- read_dta(path.expand("~/Documents/OMS VACS Climate Violence/data/raw/vacs/OneDrive_VACS_8-18-2026/Kenya VACS 2018-19/Kenya VACS 2018-19_Public Release/Kenya 2 VACS Public Use Data Package/Kenya_pubuse_092121.dta"),
+                    col_select = c(SampleWeight, strata, q2, sex, tell, sought))
+count(ke_vacs, tell)   # 1 = told someone, 2 = did not, NA = no sexual violence reported
+```
+
+## VACS weights are different from DHS weights
+
+VACS weights are **expansion weights**: they add up to the estimated number of young people aged 13-24 in the country. DHS weights add up to the sample size.
+
+```{r vacs-weights}
+vacs <- import(path.expand("~/Documents/OMS VACS Climate Violence/data/processed/vacs_disclosure_harmonised.csv"))
+
+vacs %>%
+  group_by(country) %>%
+  summarise(respondents = n(), missing_weight = sum(is.na(w)), sum_of_weights = sum(w, na.rm = TRUE), mean_weight = mean(w, na.rm = TRUE)) %>%
+  kable(digits = 1, format.args = list(big.mark = ","),
+        caption = "Sum of weights = estimated population aged 13-24 (before normalising)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+Within one country the scale of the weights does not matter (Step 4.4). Across countries it does: with expansion weights, Tanzania (about 15 million young people) would dominate Eswatini (about 0.3 million). We therefore **normalise VACS weights within each country** (divide by the country's mean weight), so that they add up to the sample size, as DHS weights do. Pooled VACS percentages then weight countries by sample size, consistent with DHS.
+
+```{r vacs-normalise}
+vacs <- vacs %>% group_by(country) %>% mutate(w_norm = w / mean(w, na.rm = TRUE)) %>% ungroup()
+vacs %>% group_by(country) %>% summarise(respondents_with_weight = sum(!is.na(w_norm)), sum_of_normalised_weights = sum(w_norm, na.rm = TRUE))
+```
+
+One Mozambique respondent (a 13-year-old boy who reported no violence) has no weight; he drops out of every weighted analysis and does not affect any result.
+
+Two further VACS points:
+
+* **Kenya and Namibia** do not release PSUs, so the stratum is used as the cluster. Strata are larger than PSUs, which gives conservative standard errors.
+* Kenya has **no rural/urban variable**, so rural residence is left out of Kenya's models only.
+
+# Step 9 - The weights inside the Bayesian model
+
+The Bayesian pooling (equation 5) does **not** use survey weights. The survey weights have already done their work inside each country model. The pooling combines country odds ratios, and each country counts according to how **precise** its estimate is (equation 6):
+
+$$w_c = \frac{1}{s_c^2 + \tau^2}$$
+
+where $s_c$ is the country's standard error and $\tau$ the between-country standard deviation. The $\tau^2$ term stops a large country from dominating. For injury ($\tau \approx 0.14$):
+
+```{r precision-weights}
+a2 <- import(here("outputs", "tables", "P33_youth_v3", "A2_country_estimates.csv")) %>%
+  filter(source == "DHS", model == "partner", outcome == "sought_any", term == "injury")
+
+tau <- 0.142
+a2 %>%
+  mutate(precision_weight = 1 / (se^2 + tau^2),
+         share_percent = 100 * precision_weight / sum(precision_weight),
+         share_without_tau = 100 * (1 / se^2) / sum(1 / se^2)) %>%
+  select(country, region, women = n, se, share_percent, share_without_tau) %>%
+  arrange(desc(share_percent)) %>%
+  kable(digits = 2, caption = "Within-region share of each country (simplified: ignores the region level)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+With $\tau$ the weights are more even: without it, the largest countries would carry more weight (Zambia about 13% instead of 10%, Nigeria about 12% instead of 9%) and the smallest less.
+
+# Step 10 - Repeating the whole analysis
+
+Run the scripts in this order (all in `analysis/`). Each reads the previous one's output.
+
+| Order | Script | What it does | Output |
+|---|---|---|---|
+| 1 | `41_build_disclosure_women.py` (run twice: without and with `--heldout`) | Raw DHS IR files to one row per woman in the violence module | `data/derived/women_disclosure*.csv.gz` |
+| 2 | `41c_add_hh_head.py` | Adds sex of household head (`v151`) | `data/derived/women_hhhead.csv.gz` |
+| 3 | `20_build_vacs_disclosure.py` | Raw VACS files to one harmonised file | `vacs_disclosure_harmonised.csv` |
+| 4 | `50_disclosure_predictors.R` with `P33_SCOPE=youth AGE_CONT=1` | Country models (main and partner), VACS models | `A2_country_estimates.csv` |
+| 5 | `59_A8_cascade_ci.R` | Cascade with survey-design CIs | `A8_5_*_cascade_ci.csv` |
+| 6 | `58_A8_pool_numpyro.py` | Bayesian pooling (NumPyro; same model as brms) | `A3_pooled_numpyro.csv` |
+| 7 | `52_disclosure_trends.R`, `69_southern_africa_pooled.R` | Trends; Southern Africa model | `A5_*`, `southern_africa_*` |
+| 8 | `73_p37_country_models.R`, `74_p37_pool.py` | Harmonised DHS-VACS pooling | `P37_harmonised/` |
+| 9 | `61b`, `61c`, `61d` figure scripts | Figures 1 to 4 | `outputs/figures/disclosure_v3/` |
+| 10 | `71_build_latex_manuscript.py`, `72_verify_manuscript_numbers.py` | Manuscript and independent number check | Overleaf `main.tex` |
+
+To repeat the analysis in R only, knit `75_disclosure_walkthrough_brms.Rmd` after steps 1 to 3: it rebuilds steps 4 to 8 with tidyverse, fixest and brms.
+
+# Session information
+
+```{r session}
+sessionInfo()
+```
