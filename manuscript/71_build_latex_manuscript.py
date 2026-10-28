@@ -597,6 +597,18 @@ DHS data are available from the DHS Program (\url{https://dhsprogram.com}) on re
 \end{document}
 """
 tex = lancet(tex)
+# keep only cited references in the paper; uncited ones go to references_for_later.tex (they return automatically once cited again)
+_ba, _bb = tex.index("\\begin{thebibliography}"), tex.index("\\end{thebibliography}")
+_cited = {k.strip() for grp in re.findall(r"\\cite\{([^}]*)\}", tex[:_ba] + tex[_bb:]) for k in grp.split(",")}
+_items = re.split(r"(?=\\bibitem\{)", tex[_ba:_bb]); _head, _items = _items[0], _items[1:]
+_key = lambda it: re.match(r"\\bibitem\{([^}]*)\}", it).group(1)
+_keep = [it for it in _items if _key(it) in _cited]; _later = [it for it in _items if _key(it) not in _cited]
+tex = tex[:_ba] + _head + "".join(_keep) + tex[_bb:]
+(OL / "references_for_later.tex").write_text(
+    "% References not cited in the current draft (kept for the Introduction and Discussion; see archive/).\n"
+    "% They return to main.tex automatically when cited there again (the build keeps only cited references).\n"
+    "\\section*{References for later use}\n\\begin{thebibliography}{99}\\setlength{\\itemsep}{0pt}\\small\n" + "".join(_later).rstrip() + "\n\\end{thebibliography}\n")
+put("references_cited", len(_keep)); put("references_for_later", [_key(it) for it in _later])
 (OL / "main.tex").write_text(tex)
 (Path(sys.argv[2]) / "numbers_used.json").write_text(json.dumps(N, indent=1, default=str))
 print("wrote", OL / "main.tex", "|", len(N), "numbers recorded")
