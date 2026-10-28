@@ -90,35 +90,139 @@ VACS public-use data are available from Together for Girls and the US CDC. The l
 
 ## 3. Analysis pipeline
 
+Every box is a script: **click a box** to open its code, or use the numbered table below the diagram (plain links that work everywhere).
+
 ```mermaid
 flowchart TD
-    A1["DHS Individual Recode files<br/>(raw .dta in .zip)"] --> B1["41_build_disclosure_women.py<br/>violence, outcomes, predictors"]
-    B1 --> B2["41c_add_hh_head.py<br/>sex of household head (v151)"]
-    B1 --> B3["41d_correction4.py<br/>formal sources, perpetrator audit"]
-    A2["VACS public-use files"] --> B4["20_build_vacs_disclosure.py<br/>harmonised indicators"]
-    B2 --> D["Analysis sample<br/>{nD:,} young women, {nS} surveys"]
+    A1[("DHS Individual Recode files<br/>raw .dta in .zip")]
+    A2[("VACS public-use files")]
+    D[["Analysis sample<br/>{nD:,} young women, {nS} surveys"]]
+    B1["41_build_disclosure_women.py<br/>violence, outcomes, predictors"]
+    B2["41c_add_hh_head.py<br/>sex of household head"]
+    B3["41d_correction4.py<br/>help sources, perpetrator audit"]
+    B4["20_build_vacs_disclosure.py<br/>harmonised VACS indicators"]
+    E1["59_A8_cascade_ci.R<br/>cascade, design-based CIs"]
+    E2["50_disclosure_predictors.R<br/>stage 1: one model per country"]
+    F0["pool_numpyro.py<br/>hierarchical model (NumPyro)"]
+    F1["58_A8_pool_numpyro.py<br/>stage 2: pooling all terms"]
+    E3["52_disclosure_trends.R<br/>within-country trends"]
+    E4["69_southern_africa_pooled.R<br/>exploratory Southern Africa"]
+    T1["83_trend_survey_estimates.R<br/>survey-level estimates"]
+    T2["84_trend_model.py<br/>trend curves (Bayesian)"]
+    T3["85_trend_metafor.R<br/>formal trend tests"]
+    G1["73_p37_country_models.R<br/>DHS and VACS country models"]
+    G2["74_p37_pool.py<br/>harmonised DHS–VACS pool"]
+    H1["81_bayes_workflow.py<br/>predictive checks, DIC, WAIC, LOO"]
+    H2["78_review_country_models.R<br/>sensitivity: country models"]
+    H3["79_review_pool.py<br/>sensitivity: pooling"]
+    H4["80_population_weights.R<br/>population weighting"]
+    I1["61b_fig1_lancet_style.R<br/>Figure 1"]
+    I2["61d_fig_cascade_forest_lancet.R<br/>Figure 2"]
+    I3["61e_fig_trends_lancet.R<br/>Figure 3"]
+    I4["61c_fig2_3_factor_forests_lancet.R<br/>appendix forest plots"]
+    J1["71_build_latex_manuscript.py<br/>manuscript"]
+    J2["manuscript_appendix.py<br/>appendix tables"]
+    K1["72_verify_manuscript_numbers.py<br/>independent number check"]
+    A1 --> B1
+    B1 --> B2
+    B1 --> B3
+    A2 --> B4
+    B2 --> D
     B3 --> D
-    D --> E1["59_A8_cascade_ci.R<br/>cascade, design-based CIs"]
-    D --> E2["50_disclosure_predictors.R<br/>stage 1: one model per country"]
+    D --> E1
+    D --> E2
     B4 --> E2
-    E2 --> F1["58_A8_pool_numpyro.py<br/>stage 2: Bayesian hierarchical pooling"]
-    D --> E3["52_disclosure_trends.R<br/>trends across rounds"]
-    D --> E5["83 / 84 / 85<br/>trend curves: survey-level<br/>meta-regression + formal tests"]
-    E5 --> I
+    F0 -.-> F1
+    E2 --> F1
+    D --> E3
     E3 --> F1
-    D --> E4["69_southern_africa_pooled.R<br/>exploratory Southern Africa"]
-    D --> G1["73 / 74<br/>harmonised DHS–VACS pool"]
+    D --> E4
+    D --> T1
+    T1 --> T2
+    T1 --> T3
+    D --> G1
     B4 --> G1
-    F1 --> H1["81_bayes_workflow.py<br/>prior/posterior predictive checks,<br/>DIC, WAIC, PSIS-LOO"]
-    D --> H2["78 / 79 / 80<br/>sensitivity analyses"]
-    F1 --> I["61b / 61c / 61d<br/>Lancet-style figures"]
-    E1 --> I
-    H1 --> J["71 + manuscript_appendix.py<br/>LaTeX manuscript and appendix"]
-    H2 --> J
-    G1 --> J
-    I --> J
-    J --> K["72_verify_manuscript_numbers.py<br/>independent check of every key number"]
+    G1 --> G2
+    F0 -.-> G2
+    F1 --> H1
+    D --> H2
+    H2 --> H3
+    D --> H4
+    E1 --> I1
+    E1 --> I2
+    T2 --> I3
+    F1 --> I4
+    F1 --> J1
+    H1 --> J2
+    H3 --> J2
+    H4 --> J2
+    G2 --> J2
+    I1 --> J1
+    I2 --> J1
+    I3 --> J1
+    I4 --> J2
+    J2 --> J1
+    J1 --> K1
+    click B1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/build/41_build_disclosure_women.py" "Open 41_build_disclosure_women.py" _blank
+    click B2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/build/41c_add_hh_head.py" "Open 41c_add_hh_head.py" _blank
+    click B3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/41d_correction4.py" "Open 41d_correction4.py" _blank
+    click B4 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/build/20_build_vacs_disclosure.py" "Open 20_build_vacs_disclosure.py" _blank
+    click E1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/59_A8_cascade_ci.R" "Open 59_A8_cascade_ci.R" _blank
+    click E2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/50_disclosure_predictors.R" "Open 50_disclosure_predictors.R" _blank
+    click F0 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Open pool_numpyro.py" _blank
+    click F1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/58_A8_pool_numpyro.py" "Open 58_A8_pool_numpyro.py" _blank
+    click E3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/52_disclosure_trends.R" "Open 52_disclosure_trends.R" _blank
+    click E4 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/69_southern_africa_pooled.R" "Open 69_southern_africa_pooled.R" _blank
+    click T1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/83_trend_survey_estimates.R" "Open 83_trend_survey_estimates.R" _blank
+    click T2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/84_trend_model.py" "Open 84_trend_model.py" _blank
+    click T3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/85_trend_metafor.R" "Open 85_trend_metafor.R" _blank
+    click G1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/harmonised/73_p37_country_models.R" "Open 73_p37_country_models.R" _blank
+    click G2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/harmonised/74_p37_pool.py" "Open 74_p37_pool.py" _blank
+    click H1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/81_bayes_workflow.py" "Open 81_bayes_workflow.py" _blank
+    click H2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/78_review_country_models.R" "Open 78_review_country_models.R" _blank
+    click H3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/79_review_pool.py" "Open 79_review_pool.py" _blank
+    click H4 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/80_population_weights.R" "Open 80_population_weights.R" _blank
+    click I1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/figures/61b_fig1_lancet_style.R" "Open 61b_fig1_lancet_style.R" _blank
+    click I2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/figures/61d_fig_cascade_forest_lancet.R" "Open 61d_fig_cascade_forest_lancet.R" _blank
+    click I3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/figures/61e_fig_trends_lancet.R" "Open 61e_fig_trends_lancet.R" _blank
+    click I4 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/figures/61c_fig2_3_factor_forests_lancet.R" "Open 61c_fig2_3_factor_forests_lancet.R" _blank
+    click J1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/manuscript/71_build_latex_manuscript.py" "Open 71_build_latex_manuscript.py" _blank
+    click J2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/manuscript/manuscript_appendix.py" "Open manuscript_appendix.py" _blank
+    click K1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/manuscript/72_verify_manuscript_numbers.py" "Open 72_verify_manuscript_numbers.py" _blank
+    classDef data fill:#eef0f7,stroke:#1B2A6B,color:#111;
+    classDef script fill:#ffffff,stroke:#555,color:#111;
+    class A1,A2,D data;
+    class B1,B2,B3,B4,E1,E2,F0,F1,E3,E4,T1,T2,T3,G1,G2,H1,H2,H3,H4,I1,I2,I3,I4,J1,J2,K1 script;
 ```
+
+| Step | Script | What it does |
+|---|---|---|
+| 1 Build | [`41_build_disclosure_women.py`](build/41_build_disclosure_women.py) | violence, outcomes, predictors |
+| 1 Build | [`41c_add_hh_head.py`](build/41c_add_hh_head.py) | sex of household head |
+| 1 Build | [`20_build_vacs_disclosure.py`](build/20_build_vacs_disclosure.py) | harmonised VACS indicators |
+| 2 Audit | [`41d_correction4.py`](review/41d_correction4.py) | help sources, perpetrator audit |
+| 3 Cascade | [`59_A8_cascade_ci.R`](analysis/59_A8_cascade_ci.R) | cascade, design-based CIs |
+| 4 Stage 1 | [`50_disclosure_predictors.R`](analysis/50_disclosure_predictors.R) | stage 1: one model per country |
+| 5 Stage 2 | [`pool_numpyro.py`](pooling/pool_numpyro.py) | hierarchical model (NumPyro) |
+| 5 Stage 2 | [`58_A8_pool_numpyro.py`](pooling/58_A8_pool_numpyro.py) | stage 2: pooling all terms |
+| 6 Trends | [`52_disclosure_trends.R`](analysis/52_disclosure_trends.R) | within-country trends |
+| 6 Trends | [`83_trend_survey_estimates.R`](analysis/83_trend_survey_estimates.R) | survey-level estimates |
+| 6 Trends | [`84_trend_model.py`](pooling/84_trend_model.py) | trend curves (Bayesian) |
+| 6 Trends | [`85_trend_metafor.R`](analysis/85_trend_metafor.R) | formal trend tests |
+| 7 Southern Africa | [`69_southern_africa_pooled.R`](analysis/69_southern_africa_pooled.R) | exploratory Southern Africa |
+| 8 DHS–VACS | [`73_p37_country_models.R`](harmonised/73_p37_country_models.R) | DHS and VACS country models |
+| 8 DHS–VACS | [`74_p37_pool.py`](harmonised/74_p37_pool.py) | harmonised DHS–VACS pool |
+| 9 Checks | [`81_bayes_workflow.py`](review/81_bayes_workflow.py) | predictive checks, DIC, WAIC, LOO |
+| 10 Sensitivity | [`78_review_country_models.R`](review/78_review_country_models.R) | sensitivity: country models |
+| 10 Sensitivity | [`79_review_pool.py`](review/79_review_pool.py) | sensitivity: pooling |
+| 10 Sensitivity | [`80_population_weights.R`](review/80_population_weights.R) | population weighting |
+| 11 Figures | [`61b_fig1_lancet_style.R`](figures/61b_fig1_lancet_style.R) | Figure 1 |
+| 11 Figures | [`61d_fig_cascade_forest_lancet.R`](figures/61d_fig_cascade_forest_lancet.R) | Figure 2 |
+| 11 Figures | [`61e_fig_trends_lancet.R`](figures/61e_fig_trends_lancet.R) | Figure 3 |
+| 11 Figures | [`61c_fig2_3_factor_forests_lancet.R`](figures/61c_fig2_3_factor_forests_lancet.R) | appendix forest plots |
+| 12 Manuscript | [`71_build_latex_manuscript.py`](manuscript/71_build_latex_manuscript.py) | manuscript |
+| 12 Manuscript | [`manuscript_appendix.py`](manuscript/manuscript_appendix.py) | appendix tables |
+| 13 Verify | [`72_verify_manuscript_numbers.py`](manuscript/72_verify_manuscript_numbers.py) | independent number check |
 
 ## 4. Model construction
 
@@ -139,7 +243,15 @@ flowchart LR
     end
     c --> obs
     obs --> out["Pooled and regional ORs, 95% CrIs,<br/>prediction intervals, regional agreement"]
+    click b href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/50_disclosure_predictors.R" "Stage 1 code" _blank
+    click c href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/analysis/50_disclosure_predictors.R" "Stage 1 code" _blank
+    click mu href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Stage 2 code" _blank
+    click mur href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Stage 2 code" _blank
+    click th href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Stage 2 code" _blank
+    click obs href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Stage 2 code" _blank
 ```
+
+Code: stage 1 in [`analysis/50_disclosure_predictors.R`](analysis/50_disclosure_predictors.R) (function `cm()`); stage 2 in [`pooling/pool_numpyro.py`](pooling/pool_numpyro.py) (functions `model()` and `pool()`), run by [`pooling/58_A8_pool_numpyro.py`](pooling/58_A8_pool_numpyro.py). The same model in R/brms: [`methods_walkthrough/75_disclosure_walkthrough_brms.Rmd`](methods_walkthrough/75_disclosure_walkthrough_brms.Rmd).
 
 ### 4.2 Equations
 
@@ -172,7 +284,15 @@ $$\\lambda_c=\\frac{{W_r}}{{\\sum_{{r'}}W_{{r'}}}}\\cdot\\frac{{w_c}}{{\\sum_{{c
 ```mermaid
 flowchart LR
     p1["Prior predictive<br/>simulation"] --> p2["NUTS sampling<br/>4 × (2000 + 2000)"] --> p3["Diagnostics<br/>R̂ < 1.01, ESS > 400,<br/>divergences, E-BFMI"] --> p4["Posterior predictive<br/>checks, Bayesian p-values"] --> p5["Model comparison<br/>M0 / M1 / M2:<br/>DIC, WAIC, PSIS-LOO"] --> p6["Sensitivity<br/>priors, effect scale,<br/>timing, one-stage"]
+    click p1 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/81_bayes_workflow.py" "Prior predictive" _blank
+    click p2 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/pooling/pool_numpyro.py" "Sampler" _blank
+    click p3 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/81_bayes_workflow.py" "Diagnostics" _blank
+    click p4 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/81_bayes_workflow.py" "Posterior predictive checks" _blank
+    click p5 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/81_bayes_workflow.py" "Model comparison" _blank
+    click p6 href "https://github.com/teklesam/disclosure-help-seeking-africa/blob/main/review/79_review_pool.py" "Sensitivity analyses" _blank
 ```
+
+Code: prior and posterior predictive checks, Bayesian p-values and DIC/WAIC/LOO in [`review/81_bayes_workflow.py`](review/81_bayes_workflow.py); prior sensitivity and the other sensitivity analyses in [`review/78_review_country_models.R`](review/78_review_country_models.R) and [`review/79_review_pool.py`](review/79_review_pool.py).
 
 M0 = common effect; M1 = countries exchangeable, no regional level; M2 = countries within regions (primary).
 
@@ -180,7 +300,7 @@ M0 = common effect; M1 = countries exchangeable, no regional level; M2 = countri
 
 $$\\theta_{{jk}}=\\mu_k+\\delta_k x_j+\\omega_k u_{{r(j)}}+\\tau_k z_j,\\qquad x_j=-\\tfrac12\\ (\\text{{DHS}}),\\ +\\tfrac12\\ (\\text{{VACS}})$$
 
-exp(μ) is the pooled OR (programmes weighted equally), exp(μ ∓ δ/2) the DHS and VACS ORs, and exp(δ) their ratio; the surveys *agree* if the 95% CrI of exp(δ) includes 1 and both estimates share a sign with probability > 0.9.
+Code: [`harmonised/73_p37_country_models.R`](harmonised/73_p37_country_models.R) and [`harmonised/74_p37_pool.py`](harmonised/74_p37_pool.py). exp(μ) is the pooled OR (programmes weighted equally), exp(μ ∓ δ/2) the DHS and VACS ORs, and exp(δ) their ratio; the surveys *agree* if the 95% CrI of exp(δ) includes 1 and both estimates share a sign with probability > 0.9.
 
 ## 5. Results
 
@@ -236,6 +356,8 @@ $$y_{{cs}}\\sim\\mathcal N(a_c+b_c t_{{cs}},\\ se_{{cs}}^2+\\sigma_e^2),\\quad b
 """ + "\n".join(f"| {lab} | " + (lambda r: f"{ci(r.OR_decade, r.OR_lo, r.OR_hi)} | {f2(r.P_decline)} | {f1(r.pp_2005_2025)} pp ({f1(r.pp_lo)} to {f1(r.pp_hi)}) | ")(TS[(TS.outcome == o) & (TS.scope == 'All')].iloc[0]) +
                  f"{ci(TMf.loc[o, 'OR_decade'], TMf.loc[o, 'lo'], TMf.loc[o, 'hi'])}, " + ("p<0.001" if TMf.loc[o, 'p_slope'] < 0.001 else f"p={TMf.loc[o, 'p_slope']:.2f}") + " | " + " | ".join((lambda r: ci(r.OR_decade, r.OR_lo, r.OR_hi))(TS[(TS.outcome == o) & (TS.scope == g)].iloc[0]) for g in ["West", "Central", "East"]) + " |"
                  for o, lab in [("told", "Told anyone"), ("sought_any", "Sought any help"), ("formal", "Sought formal help")]) + f"""
+
+Code: [`analysis/83_trend_survey_estimates.R`](analysis/83_trend_survey_estimates.R), [`pooling/84_trend_model.py`](pooling/84_trend_model.py), [`analysis/85_trend_metafor.R`](analysis/85_trend_metafor.R), figure [`figures/61e_fig_trends_lancet.R`](figures/61e_fig_trends_lancet.R).
 
 Within countries, adjusted for the women's characteristics, the odds of seeking any help fell by {100 * (1 - TR[(TR.model == "adjusted") & (TR.outcome == "sought_any")].OR.iloc[0]):.0f}% per decade ({tr('sought_any')}; {tr6} in DHS phase 6 or later).
 Southern Africa has no repeated surveys, so its trend is not estimated.
