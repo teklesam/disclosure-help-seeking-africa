@@ -13,7 +13,7 @@ T38 = pd.read_csv(P38 / "P38_pooled.csv"); B1 = pd.read_csv(P38 / "P38_B1_prior_
 H = pd.read_csv(P37 / "P37_pooled.csv").set_index(["outcome", "term"]); MC = pd.read_csv(P38 / "P38_B12_model_checks.csv")
 PP = pd.read_csv(P38 / "P38_B12_prior_predictive.csv").iloc[0]; TG = pd.read_csv(P38 / "P38_B12_togo_exclusion.csv").set_index("outcome").loc["sought_any"]
 TR = pd.read_csv(V3 / "A5_trends_numpyro.csv"); TRp = pd.read_csv(V3 / "A5_pooled_trends.csv"); HS = pd.read_csv(P38 / "P38_B8_help_sources.csv")
-VC = pd.read_csv(V3 / "A8_5_vacs_cascade_ci.csv"); CE = pd.read_csv(V3 / "A2_country_estimates.csv")
+VC = pd.read_csv(V3 / "A8_5_vacs_cascade_ci.csv"); TS = pd.read_csv(P38 / "P39_slopes.csv"); TMf = pd.read_csv(P38 / "P39_metafor_tests.csv").set_index("outcome"); CE = pd.read_csv(V3 / "A2_country_estimates.csv")
 W = pd.concat([pd.read_csv(R / f"data/derived/{f}", usecols=["survey", "country", "v012", "sought_any", "vtype"]) for f in ["women_disclosure.csv.gz", "women_disclosure_heldout.csv.gz"]])
 W = W[(W.survey != "SN_2019_8B") & W.sought_any.notna() & (W.vtype != "none") & (W.v012 <= 24)]
 V = pd.read_csv(Path.home() / "Documents/OMS VACS Climate Violence/data/processed/vacs_disclosure_harmonised.csv")
@@ -103,6 +103,8 @@ flowchart TD
     B4 --> E2
     E2 --> F1["58_A8_pool_numpyro.py<br/>stage 2: Bayesian hierarchical pooling"]
     D --> E3["52_disclosure_trends.R<br/>trends across rounds"]
+    D --> E5["83 / 84 / 85<br/>trend curves: survey-level<br/>meta-regression + formal tests"]
+    E5 --> I
     E3 --> F1
     D --> E4["69_southern_africa_pooled.R<br/>exploratory Southern Africa"]
     D --> G1["73 / 74<br/>harmonised DHS–VACS pool"]
@@ -223,10 +225,22 @@ in crude, fully adjusted and reduced socio-demographic models.
 {hrow('told', 'hh_female', 'Told anyone · female household head')}
 {hrow('sought_any', 'hh_female', 'Sought help · female household head')}
 
-### 5.5 Change over time
+### 5.5 Help-seeking has fallen since 2005
 
-Odds ratio per decade, adjusted: sought any help {tr('sought_any')}; told anyone {tr('told')}; formal help {tr('formal')}.
-Restricted to DHS phase 6 or later, the decline in seeking any help was {tr6}.
+Survey-level estimates for all {nS} surveys, pooled with a Bayesian hierarchical meta-regression (country intercepts and slopes nested in regional and overall means, survey-level residual), with a frequentist random-effects meta-regression as a formal test:
+
+$$y_{{cs}}\\sim\\mathcal N(a_c+b_c t_{{cs}},\\ se_{{cs}}^2+\\sigma_e^2),\\quad b_c=B_{{r(c)}}+\\sigma_b z_c,\\quad B_r=B+\\omega_b u_r$$
+
+| Outcome | All countries: OR per decade (95% CrI) | Pr(decline) | Change 2005–2025 | Meta-regression | West | Central | East |
+|---|---|---|---|---|---|---|---|
+""" + "\n".join(f"| {lab} | " + (lambda r: f"{ci(r.OR_decade, r.OR_lo, r.OR_hi)} | {f2(r.P_decline)} | {f1(r.pp_2005_2025)} pp ({f1(r.pp_lo)} to {f1(r.pp_hi)}) | ")(TS[(TS.outcome == o) & (TS.scope == 'All')].iloc[0]) +
+                 f"{ci(TMf.loc[o, 'OR_decade'], TMf.loc[o, 'lo'], TMf.loc[o, 'hi'])}, " + ("p<0.001" if TMf.loc[o, 'p_slope'] < 0.001 else f"p={TMf.loc[o, 'p_slope']:.2f}") + " | " + " | ".join((lambda r: ci(r.OR_decade, r.OR_lo, r.OR_hi))(TS[(TS.outcome == o) & (TS.scope == g)].iloc[0]) for g in ["West", "Central", "East"]) + " |"
+                 for o, lab in [("told", "Told anyone"), ("sought_any", "Sought any help"), ("formal", "Sought formal help")]) + f"""
+
+Within countries, adjusted for the women's characteristics, the odds of seeking any help fell by {100 * (1 - TR[(TR.model == "adjusted") & (TR.outcome == "sought_any")].OR.iloc[0]):.0f}% per decade ({tr('sought_any')}; {tr6} in DHS phase 6 or later).
+Southern Africa has no repeated surveys, so its trend is not estimated.
+
+<p align="center"><img src="docs/figures/fig_trends_lancet.png" width="760" alt="Trends in disclosure and help-seeking 2004-2025"></p>
 
 ### 5.6 Model checking
 
@@ -247,7 +261,8 @@ Restricted to DHS phase 6 or later, the decline in seeking any help was {tr6}.
 | `pooling/` | `pool_numpyro.py`, `58_A8_pool_numpyro.py` | stage 2 Bayesian pooling (NumPyro) |
 | `harmonised/` | `73_p37_country_models.R`, `74_p37_pool.py` | DHS–VACS pooling |
 | `review/` | `78_review_country_models.R`, `79_review_pool.py`, `80_population_weights.R`, `81_bayes_workflow.py` | sensitivity analyses and Bayesian workflow |
-| `figures/` | `61b`, `61c`, `61d` | figures |
+| `analysis/` | `83_trend_survey_estimates.R`, `84_trend_model.py`, `85_trend_metafor.R` | trend curves, regional and overall pooling, formal tests |
+| `figures/` | `61b`, `61c`, `61d`, `61e` | figures |
 | `manuscript/` | `71_build_latex_manuscript.py`, `manuscript_appendix.py`, `72_verify_manuscript_numbers.py` | manuscript, appendix, independent number check |
 | `methods_walkthrough/` | `76_step_by_step_guide_codes_weights.Rmd`, `75_disclosure_walkthrough_brms.Rmd` | teaching versions: survey codes and weights; the full analysis in tidyverse + brms |
 

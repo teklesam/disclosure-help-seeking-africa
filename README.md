@@ -48,6 +48,8 @@ flowchart TD
     B4 --> E2
     E2 --> F1["58_A8_pool_numpyro.py<br/>stage 2: Bayesian hierarchical pooling"]
     D --> E3["52_disclosure_trends.R<br/>trends across rounds"]
+    D --> E5["83 / 84 / 85<br/>trend curves: survey-level<br/>meta-regression + formal tests"]
+    E5 --> I
     E3 --> F1
     D --> E4["69_southern_africa_pooled.R<br/>exploratory Southern Africa"]
     D --> G1["73 / 74<br/>harmonised DHS–VACS pool"]
@@ -184,10 +186,22 @@ in crude, fully adjusted and reduced socio-demographic models.
 | Told anyone · female household head | 1.20 (1.01–1.41) | 1.14 (0.94–1.45) | 0.96 (0.80–1.19) | 1.17 (1.00–1.40) | agree |
 | Sought help · female household head | 1.13 (0.97–1.33) | 1.06 (0.81–1.36) | 0.93 (0.73–1.19) | 1.10 (0.92–1.31) | uncertain |
 
-### 5.5 Change over time
+### 5.5 Help-seeking has fallen since 2005
 
-Odds ratio per decade, adjusted: sought any help 0.73 (0.54–1.02); told anyone 0.74 (0.49–1.14); formal help 1.13 (0.54–2.00).
-Restricted to DHS phase 6 or later, the decline in seeking any help was 0.69 (0.50–0.96).
+Survey-level estimates for all 64 surveys, pooled with a Bayesian hierarchical meta-regression (country intercepts and slopes nested in regional and overall means, survey-level residual), with a frequentist random-effects meta-regression as a formal test:
+
+$$y_{cs}\sim\mathcal N(a_c+b_c t_{cs},\ se_{cs}^2+\sigma_e^2),\quad b_c=B_{r(c)}+\sigma_b z_c,\quad B_r=B+\omega_b u_r$$
+
+| Outcome | All countries: OR per decade (95% CrI) | Pr(decline) | Change 2005–2025 | Meta-regression | West | Central | East |
+|---|---|---|---|---|---|---|---|
+| Told anyone | 0.75 (0.53–1.01) | 0.97 | -14.2 pp (-30.5 to 0.6) | 0.77 (0.66–0.90), p<0.001 | 0.76 (0.58–0.98) | 0.70 (0.46–0.92) | 0.80 (0.66–0.98) |
+| Sought any help | 0.71 (0.52–0.89) | 0.99 | -15.2 pp (-28.1 to -5.3) | 0.72 (0.64–0.81), p<0.001 | 0.70 (0.56–0.84) | 0.71 (0.55–0.89) | 0.74 (0.63–0.88) |
+| Sought formal help | 1.20 (0.72–1.83) | 0.20 | 0.8 pp (-1.7 to 3.8) | 1.22 (0.93–1.60), p=0.14 | 1.10 (0.61–1.69) | 1.24 (0.72–2.11) | 1.33 (0.95–1.88) |
+
+Within countries, adjusted for the women's characteristics, the odds of seeking any help fell by 27% per decade (0.73 (0.54–1.02); 0.69 (0.50–0.96) in DHS phase 6 or later).
+Southern Africa has no repeated surveys, so its trend is not estimated.
+
+<p align="center"><img src="docs/figures/fig_trends_lancet.png" width="760" alt="Trends in disclosure and help-seeking 2004-2025"></p>
 
 ### 5.6 Model checking
 
@@ -208,7 +222,8 @@ Restricted to DHS phase 6 or later, the decline in seeking any help was 0.69 (0.
 | `pooling/` | `pool_numpyro.py`, `58_A8_pool_numpyro.py` | stage 2 Bayesian pooling (NumPyro) |
 | `harmonised/` | `73_p37_country_models.R`, `74_p37_pool.py` | DHS–VACS pooling |
 | `review/` | `78_review_country_models.R`, `79_review_pool.py`, `80_population_weights.R`, `81_bayes_workflow.py` | sensitivity analyses and Bayesian workflow |
-| `figures/` | `61b`, `61c`, `61d` | figures |
+| `analysis/` | `83_trend_survey_estimates.R`, `84_trend_model.py`, `85_trend_metafor.R` | trend curves, regional and overall pooling, formal tests |
+| `figures/` | `61b`, `61c`, `61d`, `61e` | figures |
 | `manuscript/` | `71_build_latex_manuscript.py`, `manuscript_appendix.py`, `72_verify_manuscript_numbers.py` | manuscript, appendix, independent number check |
 | `methods_walkthrough/` | `76_step_by_step_guide_codes_weights.Rmd`, `75_disclosure_walkthrough_brms.Rmd` | teaching versions: survey codes and weights; the full analysis in tidyverse + brms |
 

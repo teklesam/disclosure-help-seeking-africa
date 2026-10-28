@@ -32,7 +32,7 @@ def table(label, caption, colspec, header, body, note, size="\\footnotesize", lo
             f"\\begin{{tabular}}{{{colspec}}}\n\\toprule\n{header}\\\\\n\\midrule\n{body}\n\\bottomrule\n\\end{{tabular}}\n"
             f"\\begin{{tablenotes}}\\footnotesize\n\\item {note}\n\\end{{tablenotes}}\n\\end{{threeparttable}}\n\\end{{table}}\n")
 
-def build(harm_rows, n37d, n37v, src_table=""):
+def build(harm_rows, n37d, n37v, src_table="", forest_figs=""):
     A2 = pd.read_csv(V3 / "A2_country_estimates.csv"); A3 = pd.read_csv(V3 / "A3_pooled_numpyro.csv")
     pool = lambda m, t, o="sought_any": A3[(A3.source == "DHS") & (A3.model == m) & (A3.outcome == o) & (A3.term == t)].iloc[0]
     T38 = pd.read_csv(P38 / "P38_pooled.csv")
@@ -156,6 +156,27 @@ def build(harm_rows, n37d, n37v, src_table=""):
     out.append(table("tab:priorsens", "\\textbf{Sensitivity to the prior for between-region variation, and 95\\% prediction intervals for a new country}", ">{\\raggedright\\arraybackslash}p{5.2cm}cccc",
                      "& \\multicolumn{3}{c}{Pooled OR (95\\% CrI) with $\\omega\\sim$ Half-Normal($s$)} & \\\\\n\\cmidrule(lr){2-4}\nFactor & $s=0.25$ & $s=0.5$ (primary) & $s=1$ & 95\\% prediction interval",
                      body, "Point estimates do not depend on the prior; with three regions, the width of the all-region interval does. The prediction interval, $\\exp(\\mu+\\omega u_{\\text{new}}+\\tau z_{\\text{new}})$ under the primary prior, is the range of ORs expected in a country not in the data.\\cite{riley2011}"))
+
+    # ---------------- B2. Country forest plots and trend model ----------------
+    out.append("\\subsection*{Factors associated with help-seeking, by country}\n" + forest_figs + "\n")
+    TS = pd.read_csv(P38 / "P39_slopes.csv"); TN = pd.read_csv(P38 / "P39_slopes_noresid.csv"); TM = pd.read_csv(P38 / "P39_metafor_tests.csv").set_index("outcome")
+    OLt = {"told": "Told anyone", "sought_any": "Sought any help", "formal": "Sought formal help"}
+    body = []
+    for o in OLt:
+        for sc in ["All", "West", "Central", "East", "Southern"]:
+            r = TS[(TS.outcome == o) & (TS.scope == sc)].iloc[0]; r0 = TN[(TN.outcome == o) & (TN.scope == sc)].iloc[0]
+            lab = (OLt[o] if sc == "All" else "") ; scl = "All countries" if sc == "All" else sc + (" (not estimable)" if sc == "Southern" else "")
+            pv = TM.loc[o, 'p_slope']; pt = "p$<$0.001" if pv < 0.001 else f"p={pv:.2f}"
+            body.append(f"{lab} & {scl} & {int(r.surveys)} & {ci(r.OR_decade, r.OR_lo, r.OR_hi)} & {f2(r.P_decline)}" +
+                        f" & {ci(r0.OR_decade, r0.OR_lo, r0.OR_hi)} & " + (f"{ci(TM.loc[o, 'OR_decade'], TM.loc[o, 'lo'], TM.loc[o, 'hi'])}, {pt}" if sc == "All" else "") + " \\\\")
+        body.append("\\addlinespace")
+    out.append(table("tab:trendmodel", "\\textbf{Trends in the cascade, 2004--2025: survey-level hierarchical meta-regression}", ">{\\raggedright\\arraybackslash}p{1.9cm}lccccc",
+                     "Outcome & Scope & Surveys & OR per decade (95\\% CrI) & Pr(decline) & Without residual & Meta-regression", "\n".join(body[:-1]),
+                     "Primary model: $y_{cs}\\sim\\mathcal N(a_c+b_c t_{cs}, se_{cs}^2+\\sigma_e^2)$, $a_c=A_{r(c)}+\\sigma_a z^a_c$, $b_c=B_{r(c)}+\\sigma_b z^b_c$, $A_r=A+\\omega_a u^a_r$, $B_r=B+\\omega_b u^b_r$; $y$ = logit of the survey-weighted proportion with its design-based standard error; $t$ = decades from 2015. "
+                     "Priors: $A\\sim\\mathcal N(\\text{logit }0.3, 1.5)$ (0.03 for formal help), $B\\sim\\mathcal N(0,1)$, $\\sigma_a,\\omega_a\\sim$ Half-Normal(1), $\\sigma_b,\\omega_b,\\sigma_e\\sim$ Half-Normal(0.5). "
+                     "The registered model had no survey residual ($\\sigma_e$); it was added before interpretation because the residual variation between a country's surveys would otherwise be treated as sampling error (Pre-registration 39, deviation 1). "
+                     "Random-effects meta-regression: metafor, REML, random intercepts and slopes by country and a survey-level residual; Wald test of the slope. Southern Africa has no repeated surveys, so its slope is informed only by the other regions. "
+                     "One survey with no formal-help events (Mozambique 2022) used a 0.5 continuity correction. Change from 2005 to 2025 (overall curve): " + "; ".join(f"{OLt[o].lower()} {f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_2005_2025.iloc[0])} percentage points ({f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_lo.iloc[0])} to {f1(TS[(TS.outcome == o) & (TS.scope == 'All')].pp_hi.iloc[0])})" for o in OLt) + ".", size="\\scriptsize", sep="3pt"))
 
     # ---------------- C. Sensitivity analyses ----------------
     out.append("\\subsection*{C. Sensitivity analyses}\n")

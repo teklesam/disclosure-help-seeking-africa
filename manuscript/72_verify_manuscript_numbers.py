@@ -39,6 +39,10 @@ b1=pd.read_csv(Q/"P38_B1_prior_sensitivity.csv"); r=b1[(b1.term=="injury")&(b1.o
 tg=pd.read_csv(Q/"P38_B12_togo_exclusion.csv").iloc[0]; chk("P38 Togo exclusion", f"{tg.OR_without_togo:.2f} ({tg.lo:.2f}-{tg.hi:.2f})")
 mc=pd.read_csv(Q/"P38_B12_model_checks.csv"); n1=int(((mc.model=="M1")&(mc.elpd_diff_vs_M2>2*mc.se_diff_vs_M2)).sum()); chk("P38 M1 better count", f"marginally better in {n1} of")
 hs=pd.read_csv(Q/"P38_B8_help_sources.csv"); chk("P38 help from family", f"from family ({hs[(hs.source=='src_family')&(hs.region=='All')].pct.iloc[0]:.0f}%)")
+# Pre-registration 39 trends: read the trend tables directly
+ts39=pd.read_csv(Q/"P39_slopes.csv"); r=ts39[(ts39.outcome=="sought_any")&(ts39.scope=="All")].iloc[0]
+chk("P39 sought trend", f"{r.OR_decade:.2f} (95% CrI {r.OR_lo:.2f}-{r.OR_hi:.2f})"); chk("P39 fall 2005-2025", f"{-r.pp_2005_2025:.1f} percentage points (95% CrI {-r.pp_hi:.1f} to {-r.pp_lo:.1f})")
+r=ts39[(ts39.outcome=="formal")&(ts39.scope=="East")].iloc[0]; chk("P39 formal East", f"{r.OR_decade:.2f} (95% CrI {r.OR_lo:.2f}-{r.OR_hi:.2f})")
 ok=sum(x[2] for x in checks)
 for lab,s,f in checks: print(("OK  " if f else "MISS"), lab, "|", s)
 print(f"\n{ok}/{len(checks)} numbers found in the PDF")
