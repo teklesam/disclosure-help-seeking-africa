@@ -50,13 +50,40 @@ def build(harm_rows, n37d, n37v, src_table="", forest_figs="", methods_detail=""
     W = W[(W.survey != "SN_2019_8B") & W.sought_any.notna() & (W.vtype != "none") & (W.v012 <= 24)]
     pairs = pd.read_csv(R / "data/derived/ir_ge_pairs.csv"); pairs = pairs[pairs.usable]
     pairs["survey"] = pairs.country + "_" + pairs.years.astype(str).str[:4] + "_" + pairs.ir.str[4:6]
-    g = W.groupby("survey").apply(lambda d: pd.Series({"n": len(d), "pct": 100 * np.average(d.sought_any, weights=d.d005)}), include_groups=False).reset_index()
+    g = W.groupby("survey").size().rename("n").reset_index()
     g = g.merge(pairs[["survey", "years"]], on="survey", how="left"); g["country"] = g.survey.str[:2]; g["region"] = g.country.map(REGION)
     g["phase"] = g.survey.str.split("_").str[2].str[0]
-    g = g.sort_values(["region", "country", "years"], key=lambda s: s.map({"West": 0, "Central": 1, "East": 2, "Southern": 3}) if s.name == "region" else s)
-    body = "\n".join(f"{COUNTRY[r.country]} & {str(r.years).replace('-', '--')} & {r.phase} & {r.region} & {fmtn(r.n)} & {f1(r.pct)} \\\\" for r in g.itertuples())
-    out.append(table("tab:surveys", "\\textbf{DHS surveys included}", "llcccc", "Country & Years & Phase & UN region & Young women with violence & Sought any help, \\%",
-                     body, f"{len(g)} surveys, {g.country.nunique()} countries, {fmtn(g.n.sum())} women aged 15--24 years who reported physical or sexual violence and were asked the help-seeking questions. Percentages are survey-weighted (DHS domestic violence weight).", long=True))
+    SE_ = pd.read_csv(P38 / "P39_survey_estimates.csv"); CC_ = pd.read_csv(V3 / "A8_5_dhs_cascade_ci.csv"); CC_ = CC_[CC_.level == "country"]
+    yrs = lambda y: (lambda a, b: a if a == b else f"{a}--{b}")(*str(y).split('-'))
+    def cell_s(sv, o):
+        x = SE_[(SE_.survey == sv) & (SE_.outcome == o)]
+        if x.empty: return "--"
+        x = x.iloc[0]
+        if bool(x.zero_event_corrected):                                 # no events: exact (Clopper-Pearson) upper bound
+            return f"0.0 (0.0--{100 * (1 - 0.025 ** (1 / x.n)):.1f})$^{{\\dagger}}$"
+        return f"{f1(100 * x.p)} ({f1(100 * x.lo)}--{f1(100 * x.hi)})"
+    def cell_c(c, o):
+        x = CC_[(CC_.country == c) & (CC_.outcome == o)]
+        return "--" if x.empty else f"\\textbf{{{f1(x.pct.iloc[0])}}} ({f1(x.lo.iloc[0])}--{f1(x.hi.iloc[0])})"
+    rows_ = []
+    for reg in ["West", "Central", "East", "Southern"]:
+        rows_.append(f"\\multicolumn{{6}}{{l}}{{\\textbf{{{reg} Africa}}}} \\\\")
+        for c in sorted(g[g.region == reg].country.unique(), key=lambda k: COUNTRY[k]):
+            gs = g[g.country == c].sort_values("years")
+            if len(gs) > 1:
+                rows_.append(f"\\quad \\textbf{{{COUNTRY[c]}}}, all rounds & & \\textbf{{{fmtn(gs.n.sum())}}} & " + " & ".join(cell_c(c, o) for o in ["told", "sought_any", "formal"]) + " \\\\")
+                for r in gs.itertuples():
+                    rows_.append(f"\\qquad {yrs(r.years)} & {r.phase} & {fmtn(r.n)} & " + " & ".join(cell_s(r.survey, o) for o in ["told", "sought_any", "formal"]) + " \\\\")
+            else:
+                r = gs.iloc[0]
+                rows_.append(f"\\quad {COUNTRY[c]} {yrs(r.years)} & {r.phase} & {fmtn(r.n)} & " + " & ".join(cell_s(r.survey, o) for o in ["told", "sought_any", "formal"]) + " \\\\")
+    body = "\n".join(rows_)
+    out.append(table("tab:surveys", "\\textbf{DHS surveys included, with the disclosure cascade by country and survey}", ">{\\raggedright\\arraybackslash}p{3.4cm}ccccc",
+                     "Country and survey & Phase & Women & Told anyone, \\% (95\\% CI) & Sought any help, \\% (95\\% CI) & Sought formal help, \\% (95\\% CI)",
+                     body, f"{len(g)} surveys, {g.country.nunique()} countries, {fmtn(g.n.sum())} women aged 15--24 years who reported physical or sexual violence and were asked the help-seeking questions. "
+                     "Survey-weighted percentages (DHS domestic violence weight) with 95\\% CIs from the survey design (PSU clustering, logit method). Bold rows pool all rounds of a country. "
+                     "-- = not estimable: telling anyone could not be distinguished from seeking help, or no formal source was listed. "
+                     "$^{\\dagger}$No young woman reported formal help; exact (Clopper--Pearson) upper bound.", size="\\scriptsize", sep="3pt", long=True))
 
     CH = pd.read_csv(P38 / "P38_sample_characteristics.csv").set_index("region")
     rows = [("Women", "women", "n"), ("Surveys", "surveys", "n"), ("Countries", "countries", "n"), ("Mean age, years", "age_mean", "x"),
