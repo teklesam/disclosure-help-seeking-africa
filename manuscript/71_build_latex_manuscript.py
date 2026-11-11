@@ -7,7 +7,7 @@ from pathlib import Path
 OL = Path(sys.argv[1]); R = __import__("pathlib").Path(__import__("os").environ["RR"]); T = R / "outputs/tables"; V3 = T / "P33_youth_v3"
 (OL / "figures").mkdir(exist_ok=True)
 shutil.copy(R / "outputs/figures/disclosure_v3/fig1_map_help_seeking.png", OL / "figures/fig1_map_help_seeking.png")   # 61b_fig1_map_forest.R
-for _f in ["fig_trends.png", "fig_cascade_by_type.png", "fig_cascade_forest.png", "fig2_forest_injury_severe.png", "fig3_forest_both_former.png", "figS_prior_predictive.png", "figS_ppc.png", "figS_trend_checks.png", "figS_country_trends_sought_any.png", "figS_trends_adjusted.png", "figS_trends_by_age.png", "figS_trend_splines.png", "fig_trends_regional.png", "fig_trends_popweighted.png", "fig_trends_countries.png"]:   # figure scripts: 61b-61i
+for _f in ["fig_trends.png", "fig_cascade_by_type.png", "fig_cascade_forest.png", "fig2_forest_injury_severe.png", "fig3_forest_both_former.png", "figS_prior_predictive.png", "figS_ppc.png", "figS_trend_checks.png", "figS_country_trends_sought_any.png", "figS_trends_adjusted.png", "figS_trends_by_age.png", "figS_trend_splines.png", "fig_trends_regional.png", "fig_trends_popweighted.png", "fig_trends_countries.png", "figS_violence_vs_help.png"]:   # figure scripts: 61b-61i
     shutil.copy(R / "outputs/figures/disclosure_v3" / _f, OL / "figures" / _f)
 N = {}                                                                     # every number used, for the independent check
 def put(k, v): N[k] = v; return v
@@ -1010,6 +1010,36 @@ for kind, a, b in OLIVER:
         tex, k = re.subn(a, b, tex, flags=re.S); assert k == 1, f"Oliver edit target found {k} times: {a[:70]}"
 tex = re.sub(r"(?<!girls and )\byoung women\b", "adolescent girls and young women", tex)       # terminology: adolescent girls and young women (AGYW) aged 15-24
 tex = re.sub(r"(?<!Girls and )\bYoung women\b", "Adolescent girls and young women", tex)
+import json as _json
+_DM = _json.load(open(Path(__file__).with_name("coauthor_edits") / "b380453_diana.json"))
+for _a, _b in [(_DM["old_title"], _DM["new_title"]), (_DM["old_intro"], _DM["new_intro"])]:
+    assert tex.count(_a) == 1, "Diana edit target not found: " + _a[:60]; tex = tex.replace(_a, _b)
+P89 = pd.read_csv(R / "outputs/tables/P38_review/P89_results.csv"); C89 = pd.read_csv(R / "outputs/tables/P38_review/P89_country_changes.csv")
+_r = lambda a, m, t: P89[(P89.analysis == a) & (P89.measure == m) & P89.term.str.startswith(t)].iloc[0]
+_o = lambda r, ci="CI": f"{r.est:.2f} [95\\% {ci} {r.lo:.2f}--{r.hi:.2f}]"
+vtrend = _r("prevalence trend", "victim_ever", "OR per decade"); h0 = _r("help-seeking: time only", "victim_ever", "OR per decade"); h1 = _r("help-seeking: time + prevalence", "victim_ever", "OR per decade")
+hw = _r("help-seeking: time + prevalence", "victim_ever", "OR per 1 logit higher prevalence, within")
+put("violence_trend_or", (round(vtrend.est, 2), round(vtrend.lo, 2), round(vtrend.hi, 2))); put("help_trend_with_violence", round(h1.est, 2))
+_w = C89.n / C89.n.sum(); _mx, _my = (C89.d_viol * _w).sum(), (C89.d_help * _w).sum()
+corr89 = put("violence_help_corr", round(float((_w * (C89.d_viol - _mx) * (C89.d_help - _my)).sum() / np.sqrt((_w * (C89.d_viol - _mx)**2).sum() * (_w * (C89.d_help - _my)**2).sum())), 2))
+_api = {x["DHS_CountryCode"]: x["CountryName"] for x in _json.load(open(R.parent / "C/data/derived/dhs_countries_api.json"))["Data"]}
+_api["GM"] = "the Gambia"
+nofall = [ _api[c] for c in C89[(C89.d_viol >= 0) & (C89.d_help < 0)].sort_values("country").country ]
+nofall_txt = ", ".join(nofall[:-1]) + " and " + nofall[-1] if len(nofall) > 1 else "".join(nofall)
+VIOL = [("L", r"appendix figure~\ref{fig:trendsage}).",
+         r"appendix figure~\ref{fig:trendsage}). Nor did falling violence explain it. The percentage of adolescent girls and young women who had ever experienced violence also fell (OR per decade " + _o(vtrend) + r"), but adding each survey's prevalence to the meta-regression barely changed the trend in seeking help (OR per decade " + f"{h0.est:.2f}" + r" without and " + f"{h1.est:.2f}" + r" with it; within-country association " + _o(hw) + r"), and help-seeking fell in countries where violence did not (" + nofall_txt + r"; appendix figure~\ref{fig:violhelp})."),
+        ("L", r"and fitted a spline (appendix).",
+         r"and fitted a spline (appendix). To test whether falling violence explained the trend, we added each survey's prevalence of violence among all adolescent girls and young women in the violence module to the meta-regression (appendix).")]
+for kind, a, b in VIOL:
+    assert tex.count(a) == 1, f"violence edit target found {tex.count(a)} times: {a[:60]}"; tex = tex.replace(a, b)
+_i = tex.index(r"\label{fig:trendsage}"); _j = tex.index(r"\end{figure}", _i) + len(r"\end{figure}")
+tex = tex[:_j] + r"""
+
+\begin{figure}[!htbp]\centering
+\includegraphics[width=0.82\textwidth]{figures/figS_violence_vs_help.png}
+\caption{\textbf{Change in violence and change in help-seeking, countries with repeated surveys}\\
+Each point is one of the """ + str(len(C89)) + r""" countries with two or more DHS surveys: the change from its first to its last survey in the percentage of adolescent girls and young women aged 15--24 years in the domestic violence module who had ever experienced physical or sexual violence (horizontal), and in the percentage of survivors who sought any help (vertical), both in percentage points. Point size is proportional to the number of women analysed; weighted correlation """ + f"{corr89:.2f}" + r""". Survey-level random-effects meta-regression (random intercepts and slopes by country): the prevalence of violence fell (OR per decade """ + _o(vtrend) + r"""), and the trend in seeking any help was """ + _o(h0) + r""" per decade without and """ + _o(h1) + r""" with each survey's prevalence of violence (split into a country mean and a within-country deviation). These are survey-level associations, and prevalence is itself measured with error.}\label{fig:violhelp}
+\end{figure}""" + tex[_j:]
 tex = house_style(tex)
 # keep only cited references in the paper; uncited ones go to references_for_later.tex (they return automatically once cited again)
 _ba, _bb = tex.index("\\begin{thebibliography}"), tex.index("\\end{thebibliography}")
