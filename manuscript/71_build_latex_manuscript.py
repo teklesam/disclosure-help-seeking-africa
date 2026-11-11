@@ -1011,9 +1011,11 @@ for kind, a, b in OLIVER:
 tex = re.sub(r"(?<!girls and )\byoung women\b", "adolescent girls and young women", tex)       # terminology: adolescent girls and young women (AGYW) aged 15-24
 tex = re.sub(r"(?<!Girls and )\bYoung women\b", "Adolescent girls and young women", tex)
 import json as _json
-_DM = _json.load(open(Path(__file__).with_name("coauthor_edits") / "b380453_diana.json"))
-for _a, _b in [(_DM["old_title"], _DM["new_title"]), (_DM["old_intro"], _DM["new_intro"])]:
-    assert tex.count(_a) == 1, "Diana edit target not found: " + _a[:60]; tex = tex.replace(_a, _b)
+_DMF = Path(__file__).with_name("coauthor_edits") / "b380453_diana.json"                  # co-author draft text: local only, not in the public repository
+if _DMF.exists():
+    _DM = _json.load(open(_DMF))
+    for _a, _b in [(_DM["old_title"], _DM["new_title"]), (_DM["old_intro"], _DM["new_intro"])]:
+        assert tex.count(_a) == 1, "Diana edit target not found: " + _a[:60]; tex = tex.replace(_a, _b)
 P89 = pd.read_csv(R / "outputs/tables/P38_review/P89_results.csv"); C89 = pd.read_csv(R / "outputs/tables/P38_review/P89_country_changes.csv")
 _r = lambda a, m, t: P89[(P89.analysis == a) & (P89.measure == m) & P89.term.str.startswith(t)].iloc[0]
 _o = lambda r, ci="CI": f"{r.est:.2f} [95\\% {ci} {r.lo:.2f}--{r.hi:.2f}]"
